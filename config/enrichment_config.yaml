@@ -1,0 +1,383 @@
+# ===================================================================
+# ENHANCED EMAIL ENRICHMENT SYSTEM CONFIGURATION
+# Phase 2-4 Implementation: Premium APIs + AI + NLP
+# ===================================================================
+
+# ===================
+# ENRICHMENT SOURCES 
+# ===================
+sources:
+  # Premium Data Sources (Phase 2)
+  clearbit:
+    enabled: false  # Set to true when you have API key
+    api_key: ""  # Add your Clearbit API key
+    base_url: "https://person.clearbit.com/v2/people/find"
+    cost_per_request: 0.50
+    rate_limit: 600  # requests per hour
+    confidence_score: 0.9
+    priority: 1  # Highest priority
+    fields:
+      - location
+      - employment
+      - social_profiles
+      - demographics
+    
+  peopledatalabs:
+    enabled: false  # Set to true when you have API key  
+    api_key: ""  # Add your PDL API key
+    base_url: "https://api.peopledatalabs.com/v5"
+    cost_per_request: 0.03
+    rate_limit: 1000  # requests per hour
+    confidence_score: 0.85
+    priority: 2
+    fields:
+      - personal_emails
+      - work_emails
+      - phone_numbers
+      - location_names
+      - job_title
+      - job_company_name
+      - linkedin_url
+    
+  hunter:
+    enabled: false  # Set to true when you have API key
+    api_key: ""  # Add your Hunter.io API key  
+    base_url: "https://api.hunter.io/v2"
+    cost_per_request: 0.01
+    rate_limit: 200  # requests per hour for free plan
+    confidence_score: 0.7
+    priority: 3
+    fields:
+      - email_finder
+      - domain_search
+      - email_verifier
+      - author
+    
+  zoominfo:
+    enabled: false  # Enterprise only
+    api_key: ""
+    base_url: "https://api.zoominfo.com/lookup"
+    cost_per_request: 0.75
+    rate_limit: 300
+    confidence_score: 0.9
+    priority: 1
+    fields:
+      - contact_info
+      - company_info
+      - technographics
+      - intent_data
+    
+  apollo:
+    enabled: false  # Set to true when you have API key
+    api_key: ""  # Add your Apollo.io API key
+    base_url: "https://api.apollo.io/v1"  
+    cost_per_request: 0.05
+    rate_limit: 800
+    confidence_score: 0.8
+    priority: 2
+    fields:
+      - people
+      - organizations
+      - email_accounts
+      - phone_numbers
+
+  # Free/Low-cost Sources
+  domain_inference:
+    enabled: true
+    confidence_score: 0.6
+    priority: 4
+    
+  mock_data:
+    enabled: true  # For testing/demo
+    confidence_score: 0.8
+    priority: 5
+
+# ===================
+# SOCIAL & PROFESSIONAL NETWORKS (Phase 2.2)
+# ===================
+social_networks:
+  linkedin:
+    enabled: true
+    scraping_enabled: false  # Use with caution - LinkedIn TOS
+    api_enabled: false       # Official API requires partnership
+    confidence_score: 0.9
+    rate_limit: 100  # Very conservative
+    
+  twitter:
+    enabled: true
+    api_key: ""  # Twitter/X API v2
+    bearer_token: ""
+    confidence_score: 0.7
+    rate_limit: 300
+    
+  github:
+    enabled: true
+    api_token: ""  # GitHub Personal Access Token
+    confidence_score: 0.8
+    rate_limit: 5000
+    
+  company_websites:
+    enabled: true
+    confidence_score: 0.6
+    rate_limit: 200
+
+# ===================
+# LOCATION & DEMOGRAPHICS (Phase 2.3)
+# ===================
+location_services:
+  ip_geolocation:
+    enabled: true
+    provider: "ipapi"  # Options: ipapi, ipstack, maxmind
+    api_key: ""  # Add if using premium
+    free_tier_limit: 1000
+    confidence_score: 0.7
+    
+  phone_lookup:
+    enabled: false
+    provider: "numverify"
+    api_key: ""
+    confidence_score: 0.8
+    
+  timezone_inference:
+    enabled: true
+    confidence_score: 0.9
+    
+  address_validation:
+    enabled: false
+    provider: "google_maps"  # Requires Google Maps API
+    api_key: ""
+    confidence_score: 0.95
+
+# ===================
+# AI-POWERED ANALYSIS (Phase 3)
+# ===================
+ai_services:
+  openai:
+    enabled: false  # Set to true when you have API key
+    api_key: ""  # Add your OpenAI API key
+    model: "gpt-4-turbo-preview"
+    cost_per_1k_tokens: 0.01
+    max_tokens: 1000
+    temperature: 0.1  # Low for consistent results
+    confidence_score: 0.9
+    rate_limit: 3500  # tokens per minute
+    
+  email_analysis:
+    enabled: true
+    analyze_signatures: true
+    extract_companies: true
+    infer_relationships: true
+    communication_patterns: true
+    
+  smart_inference:
+    name_standardization: true
+    gender_inference: true
+    age_estimation: true
+    industry_classification: true
+    seniority_detection: true
+    
+  net_worth_estimation:
+    enabled: true
+    use_multiple_factors: true
+    geographic_adjustment: true
+    industry_benchmarks: true
+    company_size_factor: true
+    real_estate_estimation: false  # Requires additional APIs
+
+# ===================
+# HUGGING FACE NLP (Phase 4)
+# ===================
+huggingface:
+  enabled: true
+  use_local_models: true  # Download models locally
+  cache_dir: "data/models"
+  device: "cpu"  # Change to "cuda" if you have GPU
+  
+  sentiment_analysis:
+    model: "distilbert-base-uncased-finetuned-sst-2-english"
+    enabled: true
+    confidence_threshold: 0.7
+    
+  emotion_detection:
+    model: "j-hartmann/emotion-english-distilroberta-base"
+    enabled: true
+    emotions: ["joy", "anger", "fear", "surprise", "sadness", "disgust"]
+    confidence_threshold: 0.6
+    
+  email_classification:
+    model: "microsoft/DialoGPT-medium"
+    enabled: true
+    categories:
+      - business_proposal
+      - follow_up
+      - complaint
+      - inquiry
+      - networking
+      - meeting_request
+      - introduction
+    
+  named_entity_recognition:
+    model: "dbmdz/bert-large-cased-finetuned-conll03-english"
+    enabled: true
+    entities: ["PERSON", "ORG", "GPE", "MONEY", "DATE"]
+    
+  contact_categorization:
+    model: "facebook/bart-large-mnli"
+    enabled: true
+    categories:
+      - prospect
+      - customer  
+      - vendor
+      - partner
+      - competitor
+      - colleague
+    
+  text_similarity:
+    model: "sentence-transformers/all-MiniLM-L6-v2"
+    enabled: true
+    similarity_threshold: 0.8
+    
+  data_validation:
+    email_coherence: true
+    spam_detection: true
+    language_detection: true
+    
+  communication_intelligence:
+    response_time_prediction: true
+    relationship_lifecycle: true
+    optimal_contact_time: true
+
+# ===================
+# CONTACT INTELLIGENCE (Phase 4.1)
+# ===================
+contact_intelligence:
+  scoring:
+    enabled: true
+    factors:
+      - interaction_frequency
+      - email_response_rate
+      - meeting_attendance
+      - social_engagement
+      - company_importance
+      - deal_involvement
+    weights:
+      frequency: 0.3
+      response_rate: 0.25
+      meetings: 0.2
+      social: 0.1
+      company: 0.1
+      deals: 0.05
+      
+  relationship_strength:
+    enabled: true
+    calculation_method: "weighted_average"
+    decay_factor: 0.95  # Relationship decay over time
+    
+  best_contact_time:
+    enabled: true
+    analyze_response_patterns: true
+    consider_timezone: true
+    
+  categorization:
+    auto_tagging: true
+    ml_suggestions: true
+    custom_categories: true
+
+# ===================
+# PERFORMANCE & OPTIMIZATION
+# ===================
+performance:
+  max_concurrent_enrichments: 5
+  cache_ttl_hours: 24
+  enable_caching: true
+  batch_size: 50
+  retry_attempts: 3
+  retry_delay: 1.0  # seconds
+  timeout: 30  # seconds
+  
+  rate_limiting:
+    enabled: true
+    per_minute: 100
+    per_hour: 3000
+    per_day: 50000
+    
+  cost_controls:
+    daily_budget: 50.0  # USD
+    max_cost_per_contact: 1.0  # USD
+    alert_threshold: 0.8  # 80% of budget
+
+# ===================
+# DATA QUALITY & VALIDATION
+# ===================
+data_quality:
+  min_confidence_score: 0.5
+  require_email_validation: true
+  exclude_generic_emails: true
+  exclude_role_emails: true  # info@, admin@, etc.
+  
+  validation_rules:
+    name_min_length: 2
+    location_min_length: 3
+    company_min_length: 2
+    
+  enrichment_priorities:
+    - location
+    - job_title  
+    - company
+    - net_worth
+    - social_profiles
+    - contact_info
+
+# ===================
+# EXPORT & INTEGRATION (Phase 5)
+# ===================
+export:
+  formats:
+    excel: true
+    csv: true  
+    json: true
+    vcard: true
+    
+  analytics:
+    include_charts: true
+    include_insights: true
+    include_roi_metrics: true
+    
+  integrations:
+    google_sheets: false
+    salesforce: false  
+    hubspot: false
+    pipedrive: false
+    zapier: false
+
+# ===================
+# LOGGING & MONITORING
+# ===================
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  enrichment_stats: true
+  api_usage_tracking: true
+  cost_tracking: true
+  performance_monitoring: true
+  
+monitoring:
+  alerts:
+    budget_exceeded: true
+    api_rate_limits: true
+    enrichment_failures: true
+    low_confidence_scores: true
+
+# ===================
+# ADVANCED FEATURES
+# ===================
+advanced:
+  real_time_enrichment: false
+  webhook_notifications: false
+  custom_workflows: false
+  a_b_testing: false
+  
+  experimental:
+    image_analysis: false  # Profile picture analysis
+    voice_analysis: false  # Voice message analysis  
+    behavioral_prediction: false
+    network_analysis: true

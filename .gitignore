@@ -1,0 +1,21 @@
+# Byte-compiled files
+__pycache__/
+*.py[cod]
+
+# Virtual env
+venv/
+
+# Logs
+logs/
+
+# Config credentials
+config/gmail_credentials.json
+config/secrets.json
+config/providers_config.yaml
+
+# Data tokens
+data/tokens/
+data/gmail_token.json
+
+# Exported images
+exports/*.png
