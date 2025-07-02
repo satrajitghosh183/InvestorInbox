@@ -19,3 +19,4 @@ data/gmail_token.json
 
 # Exported images
 exports/*.png
+notes_dont_add_to_github.md
