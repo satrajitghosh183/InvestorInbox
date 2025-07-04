@@ -38,10 +38,16 @@ class PeopleDataLabsSource:
         if not self.source_config:
             raise EnrichmentError("People Data Labs configuration not found")
         
-        self.api_key = self.source_config.api_key
-        self.base_url = self.source_config.base_url
-        self.rate_limit = self.source_config.rate_limit
-        self.cost_per_request = self.source_config.cost_per_request
+        # self.api_key = self.source_config.api_key
+        # self.base_url = self.source_config.base_url
+        # self.rate_limit = self.source_config.rate_limit
+        # self.cost_per_request = self.source_config.cost_per_request
+
+        self.api_key = self.source_config['api_key']
+        self.base_url = self.source_config['base_url']
+        self.rate_limit = self.source_config['rate_limit']
+        self.cost_per_request = self.source_config['cost_per_request']
+
         
         # Rate limiting
         self.last_request_time = 0

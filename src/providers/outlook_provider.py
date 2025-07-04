@@ -1,557 +1,626 @@
+
+
 """
-Microsoft Outlook/Office 365 Email Provider
-Uses Microsoft Graph API for email access
-Production-ready with OAuth 2.0, rate limiting, and error handling
+Outlook Provider with Multiple Account Support
+Supports Microsoft Graph API for Outlook/Office 365 accounts
 """
 
-import sys, os
+import sys
+import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import asyncio
-import json
-import time
-from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
-from urllib.parse import urlencode
-import aiohttp
-import msal
 
-from core.models import Contact, EmailProvider, InteractionType
-from core.exceptions import AuthenticationError, ProviderError, RateLimitError
-from .base_provider import BaseEmailProvider, ProviderConfig
+import json
+import logging
+from typing import List, Dict, Any, Optional
+from datetime import datetime, timedelta
+from pathlib import Path
+import asyncio
+
+try:
+    import aiohttp
+    from msal import ConfidentialClientApplication, PublicClientApplication
+    MSAL_AVAILABLE = True
+except ImportError:
+    MSAL_AVAILABLE = False
+
+from providers.base_provider import BaseEmailProvider
+from core.models import Contact, InteractionType, EmailProvider, ContactType
+from core.exceptions import AuthenticationError, ProviderError
 
 class OutlookProvider(BaseEmailProvider):
     """
-    Microsoft Outlook/Office 365 provider using Graph API
-    Supports both personal Outlook.com and business Office 365 accounts
+    Outlook/Office 365 provider using Microsoft Graph API
     """
     
-    # Microsoft Graph API endpoints
-    GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
-    AUTH_BASE_URL = "https://login.microsoftonline.com"
-    
-    # OAuth 2.0 scopes for email access
-    SCOPES = [
-        "https://graph.microsoft.com/Mail.Read",
-        "https://graph.microsoft.com/User.Read",
-        "https://graph.microsoft.com/Contacts.Read"
-    ]
-    
-    def __init__(self, config: ProviderConfig):
-        super().__init__(config)
+    def __init__(self, account_id: str, email: str, credential_file: str = ""):
+        super().__init__(account_id, email, credential_file)
         
-        # Microsoft Graph specific settings
-        self.client_id = config.credentials.get('client_id')
-        self.client_secret = config.credentials.get('client_secret') 
-        self.tenant_id = config.credentials.get('tenant_id', 'common')  # 'common' for personal accounts
-        self.redirect_uri = config.credentials.get('redirect_uri', 'http://localhost:8080/auth/callback')
+        if not MSAL_AVAILABLE:
+            raise ProviderError("MSAL library not available. Install with: pip install msal aiohttp")
         
-        # Authentication state
+        # Microsoft Graph configuration
+        self.graph_url = "https://graph.microsoft.com/v1.0"
+        self.scopes = [
+            "https://graph.microsoft.com/Mail.Read",
+            "https://graph.microsoft.com/User.Read"
+        ]
+        
+        # OAuth configuration from environment or config
+        self.client_id = os.getenv('OUTLOOK_CLIENT_ID')
+        self.client_secret = os.getenv('OUTLOOK_CLIENT_SECRET')
+        self.tenant_id = os.getenv('OUTLOOK_TENANT_ID', 'common')
+        
+        if not self.client_id:
+            raise ProviderError("OUTLOOK_CLIENT_ID environment variable required")
+        
+        # MSAL app
+        self.app = None
         self.access_token = None
-        self.refresh_token = None
-        self.token_expires_at = None
         
-        # MSAL application for OAuth
-        self.msal_app = None
-        self._initialize_msal()
+        # Token file for this specific account
+        self.token_file = self._get_token_file_path()
         
-        # Session for API requests
-        self.session = None
+        # HTTP session
+        self.session: Optional[aiohttp.ClientSession] = None
+        
+        # Rate limiting (Microsoft Graph limits)
+        self.rate_limit_per_hour = 10000  # Graph API quota
+        
+        self.logger.info(f"Initialized Outlook provider for {self.email}")
     
-    def _initialize_msal(self):
-        """Initialize MSAL (Microsoft Authentication Library) application"""
-        try:
-            authority = f"{self.AUTH_BASE_URL}/{self.tenant_id}"
-            
-            self.msal_app = msal.ConfidentialClientApplication(
-                client_id=self.client_id,
-                client_credential=self.client_secret,
-                authority=authority
-            )
-            
-        except Exception as e:
-            raise AuthenticationError(
-                message=f"Failed to initialize MSAL application: {e}",
-                provider="outlook"
-            )
+    def _get_provider_type(self) -> str:
+        return "outlook"
     
-    def _get_required_credentials(self) -> List[str]:
-        """Required credentials for Outlook provider"""
-        return ['client_id', 'client_secret']
+    def _get_token_file_path(self) -> Path:
+        """Get account-specific token file path"""
+        tokens_dir = Path("data/tokens")
+        tokens_dir.mkdir(parents=True, exist_ok=True)
+        
+        safe_email = self.email.replace('@', '_').replace('.', '_')
+        return tokens_dir / f"outlook_{safe_email}_token.json"
     
     async def authenticate(self) -> bool:
-        """
-        Authenticate with Microsoft Graph API using OAuth 2.0
-        Supports both interactive and refresh token flows
-        """
+        """Authenticate with Microsoft Graph"""
         try:
-            self.logger.info("Starting Outlook authentication...")
+            # Initialize MSAL app
+            if self.client_secret:
+                # Confidential client (web app)
+                self.app = ConfidentialClientApplication(
+                    client_id=self.client_id,
+                    client_credential=self.client_secret,
+                    authority=f"https://login.microsoftonline.com/{self.tenant_id}"
+                )
+            else:
+                # Public client (desktop app)
+                self.app = PublicClientApplication(
+                    client_id=self.client_id,
+                    authority=f"https://login.microsoftonline.com/{self.tenant_id}"
+                )
             
-            # Try to load existing tokens
-            if await self._load_tokens():
-                if await self._validate_token():
-                    self.is_authenticated = True
-                    self.logger.info("Loaded existing valid tokens")
-                    return True
-                elif self.refresh_token:
-                    if await self._refresh_access_token():
-                        self.is_authenticated = True
-                        self.logger.info("Refreshed access token")
-                        return True
+            # Try to get token from cache
+            accounts = self.app.get_accounts()
+            target_account = None
             
-            # Interactive authentication flow
-            return await self._interactive_auth()
+            for account in accounts:
+                if account.get('username', '').lower() == self.email.lower():
+                    target_account = account
+                    break
             
+            token_result = None
+            
+            if target_account:
+                # Try silent token acquisition
+                token_result = self.app.acquire_token_silent(
+                    scopes=self.scopes,
+                    account=target_account
+                )
+            
+            if not token_result:
+                # Interactive authentication required
+                if self.client_secret:
+                    # For confidential client, use device flow
+                    flow = self.app.initiate_device_flow(scopes=self.scopes)
+                    
+                    print(f"To authenticate {self.email}, visit: {flow['verification_uri']}")
+                    print(f"Enter code: {flow['user_code']}")
+                    
+                    token_result = self.app.acquire_token_by_device_flow(flow)
+                else:
+                    # For public client, use interactive flow
+                    token_result = self.app.acquire_token_interactive(scopes=self.scopes)
+            
+            if not token_result or 'access_token' not in token_result:
+                error = token_result.get('error_description', 'Unknown error') if token_result else 'No token result'
+                raise AuthenticationError(f"Authentication failed: {error}")
+            
+            self.access_token = token_result['access_token']
+            
+            # Save token info
+            if self.token_file:
+                with open(self.token_file, 'w') as f:
+                    json.dump({
+                        'access_token': self.access_token,
+                        'expires_at': (datetime.now() + timedelta(seconds=token_result.get('expires_in', 3600))).isoformat(),
+                        'email': self.email
+                    }, f)
+            
+            # Verify authentication by getting user profile
+            if not await self._verify_authentication():
+                raise AuthenticationError("Token verification failed")
+            
+            self.is_authenticated = True
+            self.last_auth_check = datetime.now()
+            
+            self.logger.info(f"Successfully authenticated Outlook account: {self.email}")
+            return True
+        
         except Exception as e:
-            self.logger.error(f"Outlook authentication failed: {e}")
-            await self._handle_provider_error(e, "authentication")
+            self.logger.error(f"Outlook authentication failed for {self.email}: {e}")
+            self.last_error = str(e)
+            self.is_authenticated = False
             return False
     
-    async def _load_tokens(self) -> bool:
-        """Load tokens from storage"""
+    async def _verify_authentication(self) -> bool:
+        """Verify authentication by getting user profile"""
         try:
-            token_file = self.config.settings.get('token_file', 'data/tokens/outlook_token.json')
+            if not self.session:
+                self.session = aiohttp.ClientSession()
             
-            with open(token_file, 'r') as f:
-                token_data = json.load(f)
-            
-            self.access_token = token_data.get('access_token')
-            self.refresh_token = token_data.get('refresh_token')
-            self.token_expires_at = datetime.fromisoformat(token_data.get('expires_at', ''))
-            
-            return bool(self.access_token)
-            
-        except (FileNotFoundError, json.JSONDecodeError, KeyError):
-            return False
-    
-    async def _save_tokens(self):
-        """Save tokens to storage"""
-        try:
-            import os
-            token_file = self.config.settings.get('token_file', 'data/tokens/outlook_token.json')
-            
-            # Ensure directory exists
-            os.makedirs(os.path.dirname(token_file), exist_ok=True)
-            
-            token_data = {
-                'access_token': self.access_token,
-                'refresh_token': self.refresh_token,
-                'expires_at': self.token_expires_at.isoformat() if self.token_expires_at else None
+            headers = {
+                'Authorization': f'Bearer {self.access_token}',
+                'Content-Type': 'application/json'
             }
             
-            with open(token_file, 'w') as f:
-                json.dump(token_data, f, indent=2)
-                
-        except Exception as e:
-            self.logger.warning(f"Failed to save tokens: {e}")
-    
-    async def _validate_token(self) -> bool:
-        """Validate current access token"""
-        if not self.access_token:
-            return False
+            async with self.session.get(f"{self.graph_url}/me", headers=headers) as response:
+                if response.status == 200:
+                    user_data = await response.json()
+                    profile_email = user_data.get('mail') or user_data.get('userPrincipalName', '')
+                    
+                    if profile_email.lower() != self.email.lower():
+                        self.logger.warning(f"Profile email {profile_email} doesn't match expected {self.email}")
+                    
+                    return True
+                else:
+                    self.logger.error(f"Authentication verification failed: {response.status}")
+                    return False
         
-        if self.token_expires_at and datetime.now() >= self.token_expires_at:
-            return False
-        
-        # Test token by making a simple API call
-        try:
-            async with aiohttp.ClientSession() as session:
-                headers = {'Authorization': f'Bearer {self.access_token}'}
-                async with session.get(f"{self.GRAPH_BASE_URL}/me", headers=headers) as response:
-                    return response.status == 200
-        except:
-            return False
-    
-    async def _refresh_access_token(self) -> bool:
-        """Refresh access token using refresh token"""
-        try:
-            if not self.refresh_token:
-                return False
-            
-            result = self.msal_app.acquire_token_by_refresh_token(
-                refresh_token=self.refresh_token,
-                scopes=self.SCOPES
-            )
-            
-            if 'access_token' in result:
-                self._process_token_response(result)
-                await self._save_tokens()
-                return True
-            else:
-                self.logger.error(f"Token refresh failed: {result.get('error_description', 'Unknown error')}")
-                return False
-                
         except Exception as e:
-            self.logger.error(f"Failed to refresh token: {e}")
-            return False
-    
-    async def _interactive_auth(self) -> bool:
-        """
-        Perform interactive authentication
-        Opens browser for user consent
-        """
-        try:
-            # Get authorization URL
-            auth_url = self.msal_app.get_authorization_request_url(
-                scopes=self.SCOPES,
-                redirect_uri=self.redirect_uri
-            )
-            
-            print(f"Please visit this URL to authorize the application:")
-            print(f"{auth_url}")
-            print()
-            
-            # Get authorization code from user
-            auth_code = input("Enter the authorization code from the callback URL: ").strip()
-            
-            if not auth_code:
-                raise AuthenticationError("No authorization code provided", "outlook")
-            
-            # Exchange code for tokens
-            result = self.msal_app.acquire_token_by_authorization_code(
-                code=auth_code,
-                scopes=self.SCOPES,
-                redirect_uri=self.redirect_uri
-            )
-            
-            if 'access_token' in result:
-                self._process_token_response(result)
-                await self._save_tokens()
-                self.is_authenticated = True
-                self.logger.info("Interactive authentication successful")
-                return True
-            else:
-                error_msg = result.get('error_description', 'Unknown error')
-                raise AuthenticationError(f"Token exchange failed: {error_msg}", "outlook")
-                
-        except Exception as e:
-            self.logger.error(f"Interactive authentication failed: {e}")
-            return False
-    
-    def _process_token_response(self, token_response: Dict[str, Any]):
-        """Process token response from MSAL"""
-        self.access_token = token_response['access_token']
-        self.refresh_token = token_response.get('refresh_token')
-        
-        # Calculate expiration time
-        expires_in = token_response.get('expires_in', 3600)
-        self.token_expires_at = datetime.now() + timedelta(seconds=expires_in - 300)  # 5 min buffer
-    
-    async def test_connection(self) -> bool:
-        """Test connection to Microsoft Graph API"""
-        try:
-            if not self.is_authenticated:
-                return False
-            
-            account_info = await self.get_account_info()
-            return bool(account_info.get('id'))
-            
-        except Exception as e:
-            self.logger.error(f"Connection test failed: {e}")
+            self.logger.error(f"Authentication verification error: {e}")
             return False
     
     async def get_account_info(self) -> Dict[str, Any]:
-        """Get account information from Microsoft Graph"""
+        """Get Outlook account information"""
         try:
-            await self._ensure_session()
+            if not self.is_authenticated:
+                raise ProviderError("Not authenticated")
             
-            headers = await self._get_auth_headers()
+            if not self.session:
+                self.session = aiohttp.ClientSession()
             
-            async with self.session.get(f"{self.GRAPH_BASE_URL}/me", headers=headers) as response:
-                await self._handle_response_errors(response)
-                self._increment_api_call()
-                
-                data = await response.json()
-                
-                return {
-                    'id': data.get('id'),
-                    'email': data.get('mail') or data.get('userPrincipalName'),
-                    'display_name': data.get('displayName'),
-                    'given_name': data.get('givenName'),
-                    'surname': data.get('surname'),
-                    'job_title': data.get('jobTitle'),
-                    'office_location': data.get('officeLocation'),
-                    'tenant_id': self.tenant_id
-                }
-                
-        except Exception as e:
-            await self._handle_provider_error(e, "get_account_info")
-    
-    async def extract_contacts(self, 
-                             days_back: int = 30,
-                             max_emails: int = 1000,
-                             account_id: Optional[str] = None) -> List[Contact]:
-        """Extract contacts from Outlook emails"""
-        try:
-            self.logger.info(f"Extracting contacts from last {days_back} days, max {max_emails} emails")
-            
-            await self._ensure_session()
-            self._check_rate_limits()
-            
-            # Get account info for reference
-            account_info = await self.get_account_info()
-            my_email = account_info['email']
-            
-            # Build date filter
-            start_date, end_date = self._get_date_range(days_back)
-            date_filter = f"receivedDateTime ge {start_date.isoformat()}Z and receivedDateTime le {end_date.isoformat()}Z"
-            
-            # Get emails with pagination
-            contacts_dict = {}
-            processed_count = 0
-            
-            url = f"{self.GRAPH_BASE_URL}/me/messages"
-            params = {
-                '$filter': date_filter,
-                '$select': 'id,subject,receivedDateTime,from,toRecipients,ccRecipients,bccRecipients,sender',
-                '$orderby': 'receivedDateTime desc',
-                '$top': min(max_emails, 50)  # Process in batches
+            headers = {
+                'Authorization': f'Bearer {self.access_token}',
+                'Content-Type': 'application/json'
             }
             
-            while url and processed_count < max_emails:
-                headers = await self._get_auth_headers()
+            # Get user profile
+            async with self.session.get(f"{self.graph_url}/me", headers=headers) as response:
+                if response.status != 200:
+                    raise ProviderError(f"Failed to get user profile: {response.status}")
                 
-                async with self.session.get(url, headers=headers, params=params if url == f"{self.GRAPH_BASE_URL}/me/messages" else None) as response:
-                    await self._handle_response_errors(response)
-                    self._increment_api_call()
+                user_data = await response.json()
+            
+            # Get mailbox statistics
+            mailbox_stats = {}
+            try:
+                async with self.session.get(f"{self.graph_url}/me/mailFolders/inbox", headers=headers) as response:
+                    if response.status == 200:
+                        inbox_data = await response.json()
+                        mailbox_stats = {
+                            'total_item_count': inbox_data.get('totalItemCount', 0),
+                            'unread_item_count': inbox_data.get('unreadItemCount', 0)
+                        }
+            except Exception as e:
+                self.logger.warning(f"Failed to get mailbox stats: {e}")
+            
+            return {
+                'email': user_data.get('mail') or user_data.get('userPrincipalName'),
+                'display_name': user_data.get('displayName'),
+                'id': user_data.get('id'),
+                'account_id': self.account_id,
+                'provider_type': self.provider_type,
+                **mailbox_stats
+            }
+        
+        except Exception as e:
+            self.logger.error(f"Failed to get account info: {e}")
+            return {'error': str(e)}
+    
+    async def extract_contacts(self, days_back: int = 30, max_emails: int = 1000) -> List[Contact]:
+        """Extract contacts from Outlook"""
+        try:
+            if not self.is_authenticated:
+                if not await self.authenticate():
+                    raise ProviderError("Authentication failed")
+            
+            self.logger.info(f"Extracting contacts from Outlook account {self.email} (last {days_back} days, max {max_emails} emails)")
+            
+            # Initialize session if needed
+            if not self.session:
+                self.session = aiohttp.ClientSession()
+            
+            # Calculate date filter
+            start_date = datetime.now() - timedelta(days=days_back)
+            date_filter = start_date.strftime('%Y-%m-%dT%H:%M:%SZ')
+            
+            # Get messages
+            messages = await self._get_messages(date_filter, max_emails)
+            
+            if not messages:
+                self.logger.info("No messages found in date range")
+                return []
+            
+            self.logger.info(f"Found {len(messages)} messages, processing contacts...")
+            
+            # Process messages to extract contacts
+            contacts = await self._process_messages(messages)
+            
+            # Deduplicate contacts
+            unique_contacts = self._deduplicate_contacts(contacts)
+            
+            # Update statistics
+            await self.update_extraction_statistics(len(unique_contacts))
+            
+            self.logger.info(f"Extracted {len(unique_contacts)} unique contacts from {len(messages)} messages")
+            return unique_contacts
+        
+        except Exception as e:
+            self.logger.error(f"Contact extraction failed: {e}")
+            self.last_error = str(e)
+            raise ProviderError(f"Outlook contact extraction failed: {e}")
+    
+    async def _get_messages(self, date_filter: str, max_results: int) -> List[Dict[str, Any]]:
+        """Get message list from Microsoft Graph API"""
+        try:
+            messages = []
+            headers = {
+                'Authorization': f'Bearer {self.access_token}',
+                'Content-Type': 'application/json'
+            }
+            
+            # Build query parameters
+            filter_param = f"receivedDateTime ge {date_filter}"
+            select_param = "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead"
+            
+            url = f"{self.graph_url}/me/messages"
+            params = {
+                '$filter': filter_param,
+                '$select': select_param,
+                '$orderby': 'receivedDateTime desc',
+                '$top': min(max_results, 1000)  # Graph API max per page
+            }
+            
+            while len(messages) < max_results:
+                # Apply rate limiting
+                await self._apply_rate_limit()
+                
+                async with self.session.get(url, headers=headers, params=params) as response:
+                    if response.status == 429:  # Rate limit
+                        retry_after = int(response.headers.get('Retry-After', 60))
+                        self.logger.warning(f"Hit Graph API rate limit, waiting {retry_after} seconds")
+                        await asyncio.sleep(retry_after)
+                        continue
+                    
+                    if response.status != 200:
+                        self.logger.error(f"Failed to get messages: {response.status}")
+                        break
                     
                     data = await response.json()
-                    messages = data.get('value', [])
+                    batch_messages = data.get('value', [])
+                    messages.extend(batch_messages)
                     
-                    # Process each message
-                    for message in messages:
-                        if processed_count >= max_emails:
-                            break
-                        
-                        self._extract_contacts_from_message(
-                            message, contacts_dict, my_email, account_id
-                        )
-                        processed_count += 1
+                    # Check for next page
+                    next_link = data.get('@odata.nextLink')
+                    if not next_link or len(messages) >= max_results:
+                        break
                     
-                    # Get next page
-                    url = data.get('@odata.nextLink')
-                    params = None  # Params are included in nextLink URL
+                    url = next_link
+                    params = {}  # Parameters are included in the next link
                     
-                    # Rate limiting
-                    await asyncio.sleep(0.1)  # Small delay between requests
+                    self.logger.debug(f"Retrieved {len(messages)} messages so far...")
             
-            contacts = list(contacts_dict.values())
-            self.logger.info(f"Extracted {len(contacts)} unique contacts from {processed_count} emails")
-            
-            return contacts
-            
-        except Exception as e:
-            await self._handle_provider_error(e, "extract_contacts")
-    
-    def _extract_contacts_from_message(self, 
-                                     message: Dict[str, Any],
-                                     contacts_dict: Dict[str, Contact],
-                                     my_email: str,
-                                     account_id: Optional[str]):
-        """Extract contacts from a single message"""
-        try:
-            subject = message.get('subject', '')
-            message_id = message.get('id')
-            received_date = datetime.fromisoformat(message.get('receivedDateTime', '').replace('Z', '+00:00'))
-            
-            # Process From field
-            from_data = message.get('from', {})
-            if from_data:
-                self._process_email_address(
-                    from_data, contacts_dict, InteractionType.RECEIVED,
-                    subject, message_id, received_date, my_email, account_id
-                )
-            
-            # Process To recipients
-            for recipient in message.get('toRecipients', []):
-                self._process_email_address(
-                    recipient, contacts_dict, InteractionType.SENT,
-                    subject, message_id, received_date, my_email, account_id
-                )
-            
-            # Process CC recipients
-            for recipient in message.get('ccRecipients', []):
-                self._process_email_address(
-                    recipient, contacts_dict, InteractionType.CC,
-                    subject, message_id, received_date, my_email, account_id
-                )
-            
-            # Process BCC recipients (if available)
-            for recipient in message.get('bccRecipients', []):
-                self._process_email_address(
-                    recipient, contacts_dict, InteractionType.BCC,
-                    subject, message_id, received_date, my_email, account_id
-                )
-                
-        except Exception as e:
-            self.logger.warning(f"Error processing message {message.get('id', 'unknown')}: {e}")
-    
-    def _process_email_address(self,
-                             address_data: Dict[str, Any],
-                             contacts_dict: Dict[str, Contact],
-                             interaction_type: InteractionType,
-                             subject: str,
-                             message_id: str,
-                             timestamp: datetime,
-                             my_email: str,
-                             account_id: Optional[str]):
-        """Process a single email address from message data"""
-        try:
-            email_address = address_data.get('emailAddress', {})
-            email = email_address.get('address', '').lower().strip()
-            name = email_address.get('name', '').strip()
-            
-            # Skip my own email and invalid emails
-            if not email or email == my_email.lower() or not self._is_valid_contact_email(email):
-                return
-            
-            # Get or create contact
-            if email in contacts_dict:
-                contact = contacts_dict[email]
-                
-                # Update name if the new one is better
-                if len(name) > len(contact.name) and name:
-                    contact.name = name
-            else:
-                contact = Contact(
-                    email=email,
-                    name=name or email.split('@')[0],
-                    provider=EmailProvider.OUTLOOK,
-                    provider_contact_id=message_id,
-                    account_id=account_id,
-                    first_seen=timestamp
-                )
-                contacts_dict[email] = contact
-            
-            # Add interaction
-            contact.add_interaction(
-                interaction_type=interaction_type,
-                subject=subject,
-                message_id=message_id
-            )
-            
-        except Exception as e:
-            self.logger.warning(f"Error processing email address: {e}")
-    
-    async def get_email_headers(self, 
-                               message_id: str,
-                               account_id: Optional[str] = None) -> Dict[str, str]:
-        """Get email headers for a specific message"""
-        try:
-            await self._ensure_session()
-            headers = await self._get_auth_headers()
-            
-            url = f"{self.GRAPH_BASE_URL}/me/messages/{message_id}"
-            params = {
-                '$select': 'internetMessageHeaders,from,toRecipients,ccRecipients,subject,receivedDateTime'
-            }
-            
-            async with self.session.get(url, headers=headers, params=params) as response:
-                await self._handle_response_errors(response)
-                self._increment_api_call()
-                
-                data = await response.json()
-                
-                # Convert Graph API format to standard headers
-                headers_dict = {}
-                
-                # Add standard headers
-                if 'subject' in data:
-                    headers_dict['Subject'] = data['subject']
-                if 'receivedDateTime' in data:
-                    headers_dict['Date'] = data['receivedDateTime']
-                
-                # Process internet message headers
-                for header in data.get('internetMessageHeaders', []):
-                    headers_dict[header['name']] = header['value']
-                
-                return headers_dict
-                
-        except Exception as e:
-            await self._handle_provider_error(e, "get_email_headers")
-    
-    async def search_emails(self,
-                           query: str,
-                           max_results: int = 100,
-                           account_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Search emails using Microsoft Graph search"""
-        try:
-            await self._ensure_session()
-            headers = await self._get_auth_headers()
-            
-            url = f"{self.GRAPH_BASE_URL}/me/messages"
-            params = {
-                '$search': f'"{query}"',
-                '$select': 'id,subject,from,toRecipients,receivedDateTime,hasAttachments',
-                '$top': min(max_results, 100)
-            }
-            
-            async with self.session.get(url, headers=headers, params=params) as response:
-                await self._handle_response_errors(response)
-                self._increment_api_call()
-                
-                data = await response.json()
-                return data.get('value', [])
-                
-        except Exception as e:
-            await self._handle_provider_error(e, "search_emails")
-    
-    async def _ensure_session(self):
-        """Ensure aiohttp session exists"""
-        if not self.session:
-            timeout = aiohttp.ClientTimeout(total=self.config.timeout)
-            self.session = aiohttp.ClientSession(timeout=timeout)
-    
-    async def _get_auth_headers(self) -> Dict[str, str]:
-        """Get authorization headers for API requests"""
-        if not self.access_token:
-            raise AuthenticationError("No access token available", "outlook")
+            return messages[:max_results]
         
-        # Check if token needs refresh
-        if self.token_expires_at and datetime.now() >= self.token_expires_at:
-            if not await self._refresh_access_token():
-                raise AuthenticationError("Token refresh failed", "outlook")
+        except Exception as e:
+            self.logger.error(f"Failed to get messages: {e}")
+            return []
+    
+    async def _process_messages(self, messages: List[Dict[str, Any]]) -> List[Contact]:
+        """Process Outlook messages to extract contact information"""
+        contacts = {}
         
-        return {
-            'Authorization': f'Bearer {self.access_token}',
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-        }
-    
-    async def _handle_response_errors(self, response: aiohttp.ClientResponse):
-        """Handle HTTP response errors"""
-        if response.status == 401:
-            raise AuthenticationError("Authentication failed - token may be invalid", "outlook")
-        elif response.status == 429:
-            retry_after = int(response.headers.get('Retry-After', 3600))
-            raise RateLimitError(
-                message="Microsoft Graph rate limit exceeded",
-                provider="outlook",
-                retry_after=retry_after
-            )
-        elif response.status >= 400:
-            error_text = await response.text()
-            raise ProviderError(
-                message=f"Microsoft Graph API error: {response.status} - {error_text}",
-                provider="outlook"
-            )
-    
-    async def close(self):
-        """Close the provider and clean up resources"""
-        if self.session:
-            await self.session.close()
-            self.session = None
-    
-    def __del__(self):
-        """Cleanup when object is destroyed"""
-        if self.session and not self.session.closed:
-            # Note: This is not ideal but necessary for cleanup
-            # In production, always call close() explicitly
-            import asyncio
+        for i, message in enumerate(messages):
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    loop.create_task(self.session.close())
+                # Extract contact information
+                contact_data = self._extract_contact_from_message(message)
+                
+                if contact_data and contact_data['email']:
+                    email_key = contact_data['email'].lower()
+                    
+                    if email_key in contacts:
+                        # Merge with existing contact
+                        existing_contact = contacts[email_key]
+                        self._merge_contact_data(existing_contact, contact_data)
+                    else:
+                        # Create new contact
+                        contact = self._create_contact_from_data(contact_data)
+                        contacts[email_key] = contact
+                
+                # Progress logging
+                if (i + 1) % 50 == 0:
+                    self.logger.info(f"Processed {i + 1}/{len(messages)} messages")
+            
+            except Exception as e:
+                self.logger.error(f"Failed to process message {message.get('id', 'unknown')}: {e}")
+                continue
+        
+        return list(contacts.values())
+    
+    def _extract_contact_from_message(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Extract contact information from an Outlook message"""
+        try:
+            # Get sender and recipients
+            from_data = message.get('from', {}).get('emailAddress', {})
+            to_recipients = message.get('toRecipients', [])
+            cc_recipients = message.get('ccRecipients', [])
+            bcc_recipients = message.get('bccRecipients', [])
+            
+            from_email = from_data.get('address', '').lower()
+            from_name = from_data.get('name', '')
+            
+            # Parse timestamps
+            received_time = self._parse_outlook_date(message.get('receivedDateTime'))
+            sent_time = self._parse_outlook_date(message.get('sentDateTime'))
+            timestamp = received_time or sent_time or datetime.now()
+            
+            # Determine if this is sent or received
+            contact_email = None
+            contact_name = ""
+            interaction_type = None
+            direction = None
+            is_cc = False
+            is_bcc = False
+            
+            if from_email and from_email != self.email.lower():
+                # This is a received email
+                contact_email = from_email
+                contact_name = from_name
+                interaction_type = InteractionType.RECEIVED
+                direction = "inbound"
+            else:
+                # This is a sent email, find the primary recipient
+                for recipient in to_recipients:
+                    email_addr = recipient.get('emailAddress', {})
+                    email = email_addr.get('address', '').lower()
+                    name = email_addr.get('name', '')
+                    
+                    if email != self.email.lower():
+                        contact_email = email
+                        contact_name = name
+                        interaction_type = InteractionType.SENT
+                        direction = "outbound"
+                        break
+                
+                # Check CC recipients
+                if not contact_email:
+                    for recipient in cc_recipients:
+                        email_addr = recipient.get('emailAddress', {})
+                        email = email_addr.get('address', '').lower()
+                        name = email_addr.get('name', '')
+                        
+                        if email != self.email.lower():
+                            contact_email = email
+                            contact_name = name
+                            interaction_type = InteractionType.CC
+                            direction = "outbound"
+                            is_cc = True
+                            break
+            
+            if not contact_email or self._should_skip_email(contact_email):
+                return None
+            
+            # Get message details
+            subject = message.get('subject', '')
+            message_id = message.get('id', '')
+            body_preview = message.get('bodyPreview', '')
+            
+            return {
+                'email': contact_email,
+                'name': contact_name,
+                'interaction_type': interaction_type,
+                'direction': direction,
+                'timestamp': timestamp,
+                'subject': subject,
+                'message_id': message_id,
+                'content_preview': body_preview,
+                'is_cc': is_cc,
+                'is_bcc': is_bcc
+            }
+        
+        except Exception as e:
+            self.logger.error(f"Failed to extract contact from message: {e}")
+            return None
+    
+    def _create_contact_from_data(self, contact_data: Dict[str, Any]) -> Contact:
+        """Create a Contact object from extracted data"""
+        contact = Contact(
+            email=contact_data['email'],
+            name=contact_data.get('name', ''),
+            provider=EmailProvider.OUTLOOK
+        )
+        
+        # Set contact type based on domain
+        contact.contact_type = ContactType(self._determine_contact_type(contact.email))
+        
+        # Add source account
+        contact.add_source_account(self.account_id)
+        
+        # Create interaction
+        interaction = self._create_interaction(
+            interaction_type=contact_data['interaction_type'],
+            timestamp=contact_data['timestamp'],
+            subject=contact_data.get('subject', ''),
+            message_id=contact_data.get('message_id', ''),
+            direction=contact_data.get('direction', ''),
+            content_preview=contact_data.get('content_preview', '')
+        )
+        
+        # Add interaction to contact
+        contact.add_interaction(interaction)
+        
+        return contact
+    
+    def _merge_contact_data(self, contact: Contact, contact_data: Dict[str, Any]) -> None:
+        """Merge new contact data into existing contact"""
+        # Create new interaction
+        interaction = self._create_interaction(
+            interaction_type=contact_data['interaction_type'],
+            timestamp=contact_data['timestamp'],
+            subject=contact_data.get('subject', ''),
+            message_id=contact_data.get('message_id', ''),
+            direction=contact_data.get('direction', ''),
+            content_preview=contact_data.get('content_preview', '')
+        )
+        
+        # Add interaction
+        contact.add_interaction(interaction)
+        
+        # Update name if we have a better one
+        if not contact.name and contact_data.get('name'):
+            contact.name = contact_data['name']
+    
+    def _parse_outlook_date(self, date_str: Optional[str]) -> Optional[datetime]:
+        """Parse Outlook date string to datetime"""
+        if not date_str:
+            return None
+        
+        try:
+            # Outlook dates are in ISO 8601 format
+            if date_str.endswith('Z'):
+                date_str = date_str[:-1] + '+00:00'
+            
+            return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        except Exception as e:
+            self.logger.warning(f"Failed to parse date {date_str}: {e}")
+            return None
+    
+    async def send_email(self, to_email: str, subject: str, body: str) -> bool:
+        """Send an email via Microsoft Graph"""
+        try:
+            if not self.is_authenticated:
+                if not await self.authenticate():
+                    return False
+            
+            if not self.session:
+                self.session = aiohttp.ClientSession()
+            
+            headers = {
+                'Authorization': f'Bearer {self.access_token}',
+                'Content-Type': 'application/json'
+            }
+            
+            # Create message payload
+            message_payload = {
+                "message": {
+                    "subject": subject,
+                    "body": {
+                        "contentType": "Text",
+                        "content": body
+                    },
+                    "toRecipients": [
+                        {
+                            "emailAddress": {
+                                "address": to_email
+                            }
+                        }
+                    ]
+                }
+            }
+            
+            # Send message
+            await self._apply_rate_limit()
+            
+            async with self.session.post(
+                f"{self.graph_url}/me/sendMail",
+                headers=headers,
+                json=message_payload
+            ) as response:
+                
+                if response.status == 202:  # Accepted
+                    self.logger.info(f"Sent email to {to_email}")
+                    return True
                 else:
-                    loop.run_until_complete(self.session.close())
-            except:
-                pass
+                    error_text = await response.text()
+                    self.logger.error(f"Failed to send email: {response.status} - {error_text}")
+                    return False
+        
+        except Exception as e:
+            self.logger.error(f"Failed to send email: {e}")
+            return False
+    
+    async def get_folders(self) -> List[Dict[str, Any]]:
+        """Get Outlook mail folders"""
+        try:
+            if not self.is_authenticated:
+                if not await self.authenticate():
+                    return []
+            
+            if not self.session:
+                self.session = aiohttp.ClientSession()
+            
+            headers = {
+                'Authorization': f'Bearer {self.access_token}',
+                'Content-Type': 'application/json'
+            }
+            
+            await self._apply_rate_limit()
+            
+            async with self.session.get(f"{self.graph_url}/me/mailFolders", headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data.get('value', [])
+                else:
+                    self.logger.error(f"Failed to get folders: {response.status}")
+                    return []
+        
+        except Exception as e:
+            self.logger.error(f"Failed to get folders: {e}")
+            return []
+    
+    async def cleanup(self):
+        """Cleanup Outlook provider resources"""
+        try:
+            await super().cleanup()
+            
+            # Close HTTP session
+            if self.session:
+                await self.session.close()
+                self.session = None
+            
+            # Clear tokens
+            self.access_token = None
+            self.app = None
+            
+            self.logger.info(f"Cleaned up Outlook provider for {self.email}")
+        
+        except Exception as e:
+            self.logger.error(f"Outlook cleanup failed: {e}")
+    
+    def get_quota_usage(self) -> Dict[str, Any]:
+        """Get Microsoft Graph API quota usage information"""
+        return {
+            'requests_this_hour': self.requests_this_hour,
+            'rate_limit_per_hour': self.rate_limit_per_hour,
+            'total_requests': self.total_requests,
+            'last_request_time': self.last_request_time.isoformat() if self.last_request_time else None,
+            'has_access_token': bool(self.access_token)
+        }

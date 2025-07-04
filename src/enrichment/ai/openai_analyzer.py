@@ -451,4 +451,84 @@ Return only valid JSON, no other text.
             # Update usage tracking
             self._update_usage_tracking(response.usage.total_tokens if response.usage else 100)
             
-            return response
+            # Extract the content from the response
+            if hasattr(response, "choices") and response.choices:
+                return response.choices[0].message.content
+            else:
+                self.logger.error("OpenAI response missing choices or content")
+                raise EnrichmentError("OpenAI response missing choices or content")
+        except openai.error.RateLimitError as e:
+            self.logger.error(f"OpenAI rate limit exceeded: {e}")
+            raise RateLimitError("OpenAI rate limit exceeded")
+        except openai.error.AuthenticationError as e:
+            self.logger.error(f"OpenAI authentication failed: {e}")
+            raise AuthenticationError("OpenAI authentication failed")
+        except Exception as e:
+            self.logger.error(f"OpenAI request failed: {e}")
+            raise EnrichmentError(f"OpenAI request failed: {e}")
+
+    async def _check_rate_limits(self):
+        """Check and enforce daily rate limits"""
+        today = datetime.now().date()
+        if today != self.last_reset:
+            self.requests_today = 0
+            self.tokens_used_today = 0
+            self.last_reset = today
+        if self.ai_config.daily_request_limit and self.requests_today >= self.ai_config.daily_request_limit:
+            raise RateLimitError("Daily request limit reached")
+        if self.ai_config.daily_token_limit and self.tokens_used_today >= self.ai_config.daily_token_limit:
+            raise RateLimitError("Daily token limit reached")
+        self.requests_today += 1
+
+    def _update_usage_tracking(self, tokens_used: int):
+        """Update token usage tracking"""
+        self.tokens_used_today += tokens_used
+
+    def _clean_signature_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Clean and normalize signature analysis data"""
+        # Implement any cleaning logic as needed
+        return data
+
+    def _clean_company_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Clean and normalize company extraction data"""
+        return data
+
+    def _clean_relationship_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Clean and normalize relationship analysis data"""
+        return data
+
+    def _clean_job_title_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Clean and normalize job title inference data"""
+        return data
+
+    def _clean_communication_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Clean and normalize communication pattern data"""
+        return data
+
+    def _analyze_basic_tone(self, content: str) -> str:
+        """Basic tone analysis (stub)"""
+        # Simple heuristic, can be replaced with more advanced logic
+        if "thank" in content.lower():
+            return "positive"
+        elif "unfortunately" in content.lower() or "regret" in content.lower():
+            return "negative"
+        else:
+            return "neutral"
+
+    def _assess_authority_level(self, signature: str, email_style: str) -> str:
+        """Assess authority level from signature and style (stub)"""
+        # Simple heuristic
+        if any(title in signature.lower() for title in ["ceo", "founder", "president", "vp"]):
+            return "high"
+        elif any(title in signature.lower() for title in ["manager", "lead", "head"]):
+            return "medium"
+        else:
+            return "low"
+
+    def _extract_signature(self, content: str) -> str:
+        """Extract signature from email content (stub)"""
+        # Very basic: look for common signature delimiters
+        match = re.search(r"(?i)(?:--+|Best regards,|Sincerely,|Thanks,|Regards,)(.*)", content, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return ""

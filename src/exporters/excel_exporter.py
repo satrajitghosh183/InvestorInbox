@@ -1,5 +1,8 @@
+
+
+
 """
-Enhanced Excel Exporter - Multi-Provider Support
+Enhanced Excel Exporter - Fixed Version with Complete Contact Data Export
 Production-ready with advanced formatting, analytics, and multi-sheet support
 """
 
@@ -209,12 +212,14 @@ class EnhancedExcelExporter:
                     self._apply_style(cell, 'data')
                     
                     # Special formatting for specific columns
-                    if c_idx == df.columns.get_loc('Confidence Score') + 1:  # Confidence column
-                        if isinstance(value, (int, float)):
-                            cell.number_format = '0.0'
-                    elif c_idx == df.columns.get_loc('Relationship Strength') + 1:  # Relationship strength
-                        if isinstance(value, (int, float)):
-                            cell.number_format = '0.0%'
+                    col_name = df.columns[c_idx - 1] if c_idx <= len(df.columns) else ""
+                    
+                    if 'Confidence' in col_name and isinstance(value, (int, float)):
+                        cell.number_format = '0.0'
+                    elif 'Relationship Strength' in col_name and isinstance(value, (int, float)):
+                        cell.number_format = '0.0%'
+                    elif 'Date' in col_name and value and value != 'Unknown':
+                        cell.number_format = 'yyyy-mm-dd hh:mm'
         
         # Auto-adjust column widths
         self._adjust_column_widths(sheet, df)
@@ -227,61 +232,119 @@ class EnhancedExcelExporter:
         
         # Add auto-filter
         sheet.auto_filter.ref = f"A1:{self._get_column_letter(len(df.columns))}{len(df) + 1}"
-    
+
     def _contacts_to_dataframe(self, contacts: List[Contact]) -> pd.DataFrame:
-        """Convert contacts to a comprehensive DataFrame"""
+        """Convert contacts to a comprehensive DataFrame with ALL available data"""
         data = []
-        
+        all_enrichment_keys = set()
+
+        # First pass: gather all enrichment keys and check for social profiles
         for contact in contacts:
-            # Calculate additional metrics
+            enrichment_data = getattr(contact, 'enrichment_data', {})
+            all_enrichment_keys.update(enrichment_data.keys())
+
+        # Sort enrichment keys for consistent column order
+        sorted_enrichment_keys = sorted(all_enrichment_keys)
+
+        for contact in contacts:
+            enrichment_data = getattr(contact, 'enrichment_data', {})
+
+            # Calculate derived metrics
             days_since_last = (datetime.now(contact.last_seen.tzinfo) - contact.last_seen).days if contact.last_seen else 0
             relationship_strength = contact.calculate_relationship_strength()
-            
+
+            # Core contact data
             row = {
-                # Basic Info
+                # Basic identification
                 'Name': contact.name or 'Unknown',
                 'Email': contact.email,
                 'Domain': contact.domain,
                 'Provider': contact.provider.value if contact.provider else 'Unknown',
-                'Contact Type': contact.contact_type.value.replace('_', ' ').title(),
+                'Contact_Type': contact.contact_type.value.replace('_', ' ').title() if contact.contact_type else 'Unknown',
                 
-                # Interaction Data
-                'Total Interactions': contact.frequency,
-                'Emails Sent': contact.sent_to,
-                'Emails Received': contact.received_from,
-                'CC Count': contact.cc_count,
-                'BCC Count': contact.bcc_count,
-                'Relationship Strength': relationship_strength,
+                # Interaction metrics
+                'Total_Interactions': contact.frequency,
+                'Emails_Sent': contact.sent_to,
+                'Emails_Received': contact.received_from,
+                'CC_Count': contact.cc_count,
+                'BCC_Count': contact.bcc_count,
+                'Relationship_Strength': relationship_strength,
                 
-                # Enrichment Data
-                'Location': contact.location or 'Unknown',
-                'Estimated Net Worth': contact.estimated_net_worth or 'Unknown',
-                'Job Title': contact.job_title or 'Unknown',
-                'Company': contact.company or 'Unknown',
-                'Industry': getattr(contact, 'industry', '') or 'Unknown',
-                'Seniority Level': getattr(contact, 'seniority_level', '') or 'Unknown',
+                # Core enriched data (prioritize contact attributes over enrichment_data)
+                'Location': self._get_best_value(self._safe_getattr(contact, 'location'), enrichment_data.get('location')),
+                'Net_Worth': self._get_best_value(self._safe_getattr(contact, 'estimated_net_worth'), enrichment_data.get('net_worth')),
+                'Job_Title': self._get_best_value(self._safe_getattr(contact, 'job_title'), enrichment_data.get('job_title')),
+                'Company': self._get_best_value(self._safe_getattr(contact, 'company'), enrichment_data.get('company')),
+                'Industry': self._get_best_value(self._safe_getattr(contact, 'industry'), enrichment_data.get('industry')),
+                'Seniority_Level': self._get_best_value(self._safe_getattr(contact, 'seniority_level'), enrichment_data.get('seniority_level')),
                 
-                # Social Profiles
-                'LinkedIn URL': getattr(contact, 'linkedin_url', '') or '',
-                'Twitter Handle': getattr(contact, 'twitter_handle', '') or '',
-                'GitHub Username': getattr(contact, 'github_username', '') or '',
+                # Social profiles (check both contact attributes and enrichment data)
+                'LinkedIn_URL': self._get_best_value(self._safe_getattr(contact, 'linkedin_url'), enrichment_data.get('linkedin_url')),
+                'Twitter_Handle': self._get_best_value(self._safe_getattr(contact, 'twitter_handle'), enrichment_data.get('twitter')),
+                'GitHub_Username': self._get_best_value(self._safe_getattr(contact, 'github_username'), enrichment_data.get('github')),
+                'Facebook_URL': enrichment_data.get('facebook_url', ''),
+                'Instagram_Handle': enrichment_data.get('instagram', ''),
                 
-                # Metadata
-                'Data Source': contact.data_source or 'None',
-                'Confidence Score': contact.confidence,
-                'First Seen': contact.first_seen.strftime('%Y-%m-%d %H:%M') if contact.first_seen else '',
-                'Last Seen': contact.last_seen.strftime('%Y-%m-%d %H:%M') if contact.last_seen else '',
-                'Days Since Last Contact': days_since_last,
-                'Is Verified': 'Yes' if getattr(contact, 'is_verified', False) else 'No',
-                'Tags': ', '.join(getattr(contact, 'tags', [])) if getattr(contact, 'tags', None) else '',
-                'Notes': getattr(contact, 'notes', '') or ''
+                # Additional enriched fields
+                'Phone_Number': enrichment_data.get('phone', ''),
+                'Bio': enrichment_data.get('bio', ''),
+                'Website': enrichment_data.get('website', ''),
+                'Skills': ', '.join(enrichment_data.get('skills', [])) if isinstance(enrichment_data.get('skills'), list) else enrichment_data.get('skills', ''),
+                'Education': enrichment_data.get('education', ''),
+                'Experience_Years': enrichment_data.get('experience_years', ''),
+                'Department': enrichment_data.get('department', ''),
+                'Employee_Count': enrichment_data.get('employee_count', ''),
+                'Company_Revenue': enrichment_data.get('company_revenue', ''),
+                'Technologies': ', '.join(enrichment_data.get('technologies', [])) if isinstance(enrichment_data.get('technologies'), list) else enrichment_data.get('technologies', ''),
+                
+                # Source and quality metadata
+                'Data_Source': self._safe_getattr(contact, 'data_source', 'None'),
+                'Confidence_Score': self._safe_getattr(contact, 'confidence', 0.0),
+                'Source_Accounts': ', '.join(self._safe_getattr(contact, 'source_accounts', [])),
+                
+                # Timing data
+                'First_Seen': contact.first_seen.strftime('%Y-%m-%d %H:%M') if contact.first_seen else '',
+                'Last_Seen': contact.last_seen.strftime('%Y-%m-%d %H:%M') if contact.last_seen else '',
+                'Days_Since_Last_Contact': days_since_last,
+                
+                # Additional metadata
+                'Is_Verified': 'Yes' if self._safe_getattr(contact, 'is_verified', False) else 'No',
+                'Tags': ', '.join(self._safe_getattr(contact, 'tags', [])),
+                'Notes': self._safe_getattr(contact, 'notes', '')
             }
+
+            # Add any remaining enrichment fields that weren't covered above
+            for key in sorted_enrichment_keys:
+                if key not in ['location', 'net_worth', 'job_title', 'company', 'industry', 'seniority_level', 
+                              'linkedin_url', 'twitter', 'github', 'facebook_url', 'instagram', 'phone', 'bio', 
+                              'website', 'skills', 'education', 'experience_years', 'department', 'employee_count',
+                              'company_revenue', 'technologies']:
+                    # Add with prefix to avoid conflicts
+                    clean_key = key.replace('_', ' ').title()
+                    row[f"Extra_{clean_key}"] = enrichment_data.get(key, '')
+
             data.append(row)
-        
+
         return pd.DataFrame(data)
+
+    def _get_best_value(self, contact_value, enrichment_value):
+        """Get the best available value, preferring contact attributes over enrichment data"""
+        if contact_value and contact_value not in ['Unknown', '', None]:
+            return contact_value
+        elif enrichment_value and enrichment_value not in ['Unknown', '', None]:
+            return enrichment_value
+        else:
+            return 'Unknown'
     
+    def _safe_getattr(self, obj, attr_name, default=None):
+        """Safely get attribute from object, return default if not exists"""
+        try:
+            return getattr(obj, attr_name, default)
+        except AttributeError:
+            return default
+
     async def _create_summary_sheet(self, contacts: List[Contact]):
-        """Create executive summary sheet"""
+        """Create executive summary sheet with enhanced metrics"""
         sheet = self.workbook.create_sheet("Executive Summary")
         
         # Title
@@ -300,17 +363,19 @@ class EnhancedExcelExporter:
         self._apply_style(sheet[f'A{row}'], 'subheader')
         row += 1
         
-        # Calculate metrics
+        # Calculate comprehensive metrics
         total_contacts = len(contacts)
         unique_domains = len(set(c.domain for c in contacts))
-        unique_providers = len(set(c.provider.value for c in contacts))
+        unique_providers = len(set(c.provider.value for c in contacts if c.provider))
         total_interactions = sum(c.frequency for c in contacts)
         avg_relationship_strength = sum(c.calculate_relationship_strength() for c in contacts) / total_contacts if total_contacts > 0 else 0
         
-        # Enrichment stats
-        with_location = sum(1 for c in contacts if c.location and c.location != 'Unknown')
-        with_net_worth = sum(1 for c in contacts if c.estimated_net_worth and c.estimated_net_worth != 'Unknown')
-        with_job_title = sum(1 for c in contacts if c.job_title and c.job_title != 'Unknown')
+        # Enhanced enrichment stats
+        with_location = sum(1 for c in contacts if self._has_meaningful_data(self._safe_getattr(c, 'location')) or self._has_meaningful_data(getattr(c, 'enrichment_data', {}).get('location')))
+        with_net_worth = sum(1 for c in contacts if self._has_meaningful_data(self._safe_getattr(c, 'estimated_net_worth')) or self._has_meaningful_data(getattr(c, 'enrichment_data', {}).get('net_worth')))
+        with_job_title = sum(1 for c in contacts if self._has_meaningful_data(self._safe_getattr(c, 'job_title')) or self._has_meaningful_data(getattr(c, 'enrichment_data', {}).get('job_title')))
+        with_company = sum(1 for c in contacts if self._has_meaningful_data(self._safe_getattr(c, 'company')) or self._has_meaningful_data(getattr(c, 'enrichment_data', {}).get('company')))
+        with_social = sum(1 for c in contacts if self._has_social_profiles(c))
         
         metrics = [
             ("Total Contacts", total_contacts, "👥"),
@@ -322,7 +387,9 @@ class EnhancedExcelExporter:
             ("ENRICHMENT COVERAGE", "", ""),
             ("With Location Data", f"{with_location} ({with_location/total_contacts*100:.1f}%)", "📍"),
             ("With Net Worth Data", f"{with_net_worth} ({with_net_worth/total_contacts*100:.1f}%)", "💰"),
-            ("With Job Title", f"{with_job_title} ({with_job_title/total_contacts*100:.1f}%)", "💼")
+            ("With Job Title", f"{with_job_title} ({with_job_title/total_contacts*100:.1f}%)", "💼"),
+            ("With Company Data", f"{with_company} ({with_company/total_contacts*100:.1f}%)", "🏢"),
+            ("With Social Profiles", f"{with_social} ({with_social/total_contacts*100:.1f}%)", "🌐")
         ]
         
         for metric_name, metric_value, icon in metrics:
@@ -355,52 +422,30 @@ class EnhancedExcelExporter:
             sheet[f'C{row + i}'] = f"{percentage:.1f}%"
             self._apply_style(sheet[f'C{row + i}'], 'percentage')
         
-        # Contact type breakdown
-        row += 12
-        sheet[f'A{row}'] = "CONTACT TYPES"
-        self._apply_style(sheet[f'A{row}'], 'subheader')
-        row += 1
-        
-        type_counts = Counter(c.contact_type.value for c in contacts)
-        for contact_type, count in type_counts.most_common():
-            percentage = (count / total_contacts) * 100
-            type_name = contact_type.replace('_', ' ').title()
-            
-            sheet[f'A{row}'] = type_name
-            sheet[f'B{row}'] = count
-            sheet[f'C{row}'] = f"{percentage:.1f}%"
-            self._apply_style(sheet[f'C{row}'], 'percentage')
-            row += 1
-        
-        # High-value contacts
-        row += 2
-        sheet[f'A{row}'] = "HIGH-VALUE CONTACTS"
-        self._apply_style(sheet[f'A{row}'], 'subheader')
-        row += 1
-        
-        # Sort by relationship strength
-        high_value_contacts = sorted(contacts, key=lambda c: c.calculate_relationship_strength(), reverse=True)[:10]
-        
-        # Headers
-        sheet[f'A{row}'] = "Name"
-        sheet[f'B{row}'] = "Email"
-        sheet[f'C{row}'] = "Company"
-        sheet[f'D{row}'] = "Relationship Strength"
-        for col in ['A', 'B', 'C', 'D']:
-            self._apply_style(sheet[f'{col}{row}'], 'subheader')
-        row += 1
-        
-        for contact in high_value_contacts:
-            sheet[f'A{row}'] = contact.name
-            sheet[f'B{row}'] = contact.email
-            sheet[f'C{row}'] = contact.company or contact.domain
-            sheet[f'D{row}'] = contact.calculate_relationship_strength()
-            self._apply_style(sheet[f'D{row}'], 'percentage')
-            row += 1
-        
         # Auto-adjust columns
         self._adjust_column_widths(sheet)
-    
+
+    def _has_meaningful_data(self, value):
+        """Check if a value contains meaningful data"""
+        return value and value not in ['Unknown', '', None, 'N/A']
+
+    def _has_social_profiles(self, contact):
+        """Check if contact has any social profiles"""
+        enrichment_data = getattr(contact, 'enrichment_data', {})
+        
+        social_fields = [
+            self._safe_getattr(contact, 'linkedin_url'),
+            self._safe_getattr(contact, 'twitter_handle'),
+            self._safe_getattr(contact, 'github_username'),
+            enrichment_data.get('linkedin_url'),
+            enrichment_data.get('twitter'),
+            enrichment_data.get('github'),
+            enrichment_data.get('facebook_url'),
+            enrichment_data.get('instagram')
+        ]
+        
+        return any(self._has_meaningful_data(field) for field in social_fields)
+
     async def _create_provider_analysis_sheet(self, contacts: List[Contact]):
         """Create provider-specific analysis sheet"""
         sheet = self.workbook.create_sheet("Provider Analysis")
@@ -433,8 +478,12 @@ class EnhancedExcelExporter:
             total_interactions = sum(c.frequency for c in provider_contacts)
             avg_interactions = total_interactions / contact_count if contact_count > 0 else 0
             
-            # Enrichment rate
-            enriched = sum(1 for c in provider_contacts if c.data_source and c.data_source != 'None')
+            # Enhanced enrichment rate calculation
+            enriched = sum(1 for c in provider_contacts 
+                         if (self._safe_getattr(c, 'data_source') and self._safe_getattr(c, 'data_source') != 'None') or 
+                            self._has_meaningful_data(self._safe_getattr(c, 'location')) or 
+                            self._has_meaningful_data(self._safe_getattr(c, 'estimated_net_worth')) or
+                            self._has_social_profiles(c))
             enrichment_rate = enriched / contact_count if contact_count > 0 else 0
             
             # Top domain
@@ -483,7 +532,7 @@ class EnhancedExcelExporter:
         # Group by data source
         source_groups = {}
         for contact in contacts:
-            source = contact.data_source or 'No Enrichment'
+            source = self._safe_getattr(contact, 'data_source', 'No Enrichment') or 'No Enrichment'
             if source not in source_groups:
                 source_groups[source] = []
             source_groups[source].append(contact)
@@ -492,12 +541,14 @@ class EnhancedExcelExporter:
         
         for source, source_contacts in source_groups.items():
             count = len(source_contacts)
-            avg_confidence = sum(c.confidence for c in source_contacts) / count if count > 0 else 0
+            avg_confidence = sum(self._safe_getattr(c, 'confidence', 0.0) for c in source_contacts) / count if count > 0 else 0
             
-            # Success rate (contacts with meaningful enrichment)
+            # Enhanced success rate calculation
             successful = sum(1 for c in source_contacts 
-                           if (c.location and c.location != 'Unknown') or 
-                              (c.estimated_net_worth and c.estimated_net_worth != 'Unknown'))
+                           if self._has_meaningful_data(self._safe_getattr(c, 'location')) or 
+                              self._has_meaningful_data(self._safe_getattr(c, 'estimated_net_worth')) or
+                              self._has_meaningful_data(self._safe_getattr(c, 'job_title')) or
+                              self._has_social_profiles(c))
             success_rate = successful / count if count > 0 else 0
             
             coverage = count / total_contacts if total_contacts > 0 else 0
@@ -572,7 +623,7 @@ class EnhancedExcelExporter:
         """Add conditional formatting to contacts sheet"""
         try:
             # Confidence score color scale
-            confidence_col = self._find_column_index(sheet, 'Confidence Score')
+            confidence_col = self._find_column_index(sheet, 'Confidence_Score')
             if confidence_col:
                 confidence_range = f"{self._get_column_letter(confidence_col)}2:{self._get_column_letter(confidence_col)}{row_count + 1}"
                 
@@ -584,7 +635,7 @@ class EnhancedExcelExporter:
                 sheet.conditional_formatting.add(confidence_range, color_scale)
             
             # Relationship strength data bars
-            strength_col = self._find_column_index(sheet, 'Relationship Strength')
+            strength_col = self._find_column_index(sheet, 'Relationship_Strength')
             if strength_col:
                 strength_range = f"{self._get_column_letter(strength_col)}2:{self._get_column_letter(strength_col)}{row_count + 1}"
                 
@@ -631,22 +682,37 @@ class EnhancedExcelExporter:
                 # Apply widths
                 for col_idx, (column, width) in enumerate(column_widths.items(), 1):
                     column_letter = self._get_column_letter(col_idx)
-                    sheet.column_dimensions[column_letter].width = width
+                    try:
+                        sheet.column_dimensions[column_letter].width = width
+                    except Exception as e:
+                        # Skip if there's an issue with merged cells
+                        self.logger.debug(f"Skipping column width for {column_letter}: {e}")
+                        continue
             else:
                 # Fallback: auto-adjust based on cell content
-                for column in sheet.columns:
+                for col_num in range(1, sheet.max_column + 1):
                     max_length = 0
-                    column_letter = column[0].column_letter
+                    column_letter = self._get_column_letter(col_num)
                     
-                    for cell in column:
+                    for row_num in range(1, min(sheet.max_row + 1, 100)):  # Limit to first 100 rows for performance
                         try:
-                            if len(str(cell.value)) > max_length:
-                                max_length = len(str(cell.value))
-                        except:
-                            pass
+                            cell = sheet.cell(row=row_num, column=col_num)
+                            if hasattr(cell, 'value') and cell.value is not None:
+                                cell_length = len(str(cell.value))
+                                if cell_length > max_length:
+                                    max_length = cell_length
+                        except Exception:
+                            # Skip problematic cells
+                            continue
                     
-                    adjusted_width = min(max_length + 3, 50)
-                    sheet.column_dimensions[column_letter].width = adjusted_width
+                    if max_length > 0:
+                        adjusted_width = min(max_length + 3, 50)
+                        try:
+                            sheet.column_dimensions[column_letter].width = adjusted_width
+                        except Exception as e:
+                            # Skip if there's an issue
+                            self.logger.debug(f"Skipping column width for {column_letter}: {e}")
+                            continue
                     
         except Exception as e:
             self.logger.warning(f"Failed to adjust column widths: {e}")
@@ -831,18 +897,29 @@ class EnhancedExcelExporter:
         if not contacts:
             return 0.0
         
-        quality_factors = [
-            sum(1 for c in contacts if c.name and c.name != 'Unknown'),
-            sum(1 for c in contacts if c.location and c.location != 'Unknown'),
-            sum(1 for c in contacts if c.estimated_net_worth and c.estimated_net_worth != 'Unknown'),
-            sum(1 for c in contacts if c.job_title and c.job_title != 'Unknown'),
-            sum(1 for c in contacts if c.company and c.company != 'Unknown')
-        ]
+        quality_factors = []
         
-        total_possible = len(contacts) * len(quality_factors)
-        total_actual = sum(quality_factors)
+        for contact in contacts:
+            score = 0
+            total_fields = 6  # Number of fields we're checking
+            
+            # Check core fields using safe attribute access
+            if self._has_meaningful_data(contact.name):
+                score += 1
+            if self._has_meaningful_data(self._safe_getattr(contact, 'location')) or self._has_meaningful_data(getattr(contact, 'enrichment_data', {}).get('location')):
+                score += 1
+            if self._has_meaningful_data(self._safe_getattr(contact, 'estimated_net_worth')) or self._has_meaningful_data(getattr(contact, 'enrichment_data', {}).get('net_worth')):
+                score += 1
+            if self._has_meaningful_data(self._safe_getattr(contact, 'job_title')) or self._has_meaningful_data(getattr(contact, 'enrichment_data', {}).get('job_title')):
+                score += 1
+            if self._has_meaningful_data(self._safe_getattr(contact, 'company')) or self._has_meaningful_data(getattr(contact, 'enrichment_data', {}).get('company')):
+                score += 1
+            if self._has_social_profiles(contact):
+                score += 1
+                
+            quality_factors.append(score / total_fields)
         
-        return (total_actual / total_possible) * 100 if total_possible > 0 else 0.0
+        return (sum(quality_factors) / len(quality_factors)) * 100 if quality_factors else 0.0
     
     def _generate_insights(self, contacts: List[Contact]) -> List[str]:
         """Generate actionable insights from contact data"""
@@ -877,5 +954,15 @@ class EnhancedExcelExporter:
         quality_score = self._calculate_data_quality_score(contacts)
         if quality_score < 60:
             insights.append("Poor data quality - invest in contact enrichment services")
+            
+        # Social media presence insights
+        with_social = sum(1 for c in contacts if self._has_social_profiles(c))
+        if with_social / total_contacts < 0.3:
+            insights.append("Low social media coverage - consider LinkedIn Sales Navigator for better prospecting")
+            
+        # Enrichment coverage insights
+        enriched_contacts = sum(1 for c in contacts if self._safe_getattr(c, 'data_source') and self._safe_getattr(c, 'data_source') != 'None')
+        if enriched_contacts / total_contacts < 0.5:
+            insights.append("Low enrichment coverage - increase data enrichment efforts for better insights")
         
         return insights

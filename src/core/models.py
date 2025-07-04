@@ -1,98 +1,8 @@
-# """
-# Core models for the email enrichment system
-# """
-
-# import sys
-# import os
-# sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# from dataclasses import dataclass, field
-# from datetime import datetime
-# from typing import List, Optional, Dict, Any
-# from enum import Enum
-# import uuid
-
-# class EmailProvider(Enum):
-#     GMAIL = "gmail"
-#     OUTLOOK = "outlook"
-#     YAHOO = "yahoo"
-#     IMAP = "imap"
-#     ICLOUD = "icloud"
-#     OTHER = "other"
-
-# class ContactType(Enum):
-#     PERSONAL = "personal"
-#     BUSINESS = "business"
-#     BIG_TECH = "big_tech"
-#     ACADEMIC = "academic"
-#     GOVERNMENT = "government"
-#     UNKNOWN = "unknown"
-
-# class InteractionType(Enum):
-#     SENT = "sent"
-#     RECEIVED = "received"
-#     CC = "cc"
-#     BCC = "bcc"
-
-# @dataclass
-# class Contact:
-#     email: str = ""
-#     name: str = ""
-#     provider: EmailProvider = EmailProvider.OTHER
-#     contact_type: ContactType = ContactType.UNKNOWN
-#     frequency: int = 0
-#     first_seen: datetime = field(default_factory=datetime.now)
-#     last_seen: datetime = field(default_factory=datetime.now)
-#     location: str = ""
-#     estimated_net_worth: str = ""
-#     data_source: str = ""
-#     confidence: float = 0.0
-#     domain: str = field(init=False)
-#     sent_to: int = 0
-#     received_from: int = 0
-#     cc_count: int = 0
-#     bcc_count: int = 0
-#     job_title: str = ""
-#     company: str = ""
-#     linkedin_url: str = ""
-#     interactions: List = field(default_factory=list)
-#     tags: List[str] = field(default_factory=list)
-#     is_verified: bool = False
-    
-#     def __post_init__(self):
-#         if self.email and '@' in self.email:
-#             self.domain = self.email.split('@')[1]
-    
-#     def add_interaction(self, interaction_type: InteractionType, subject: str = "", message_id: str = ""):
-#         self.frequency += 1
-#         if interaction_type == InteractionType.SENT:
-#             self.sent_to += 1
-#         elif interaction_type == InteractionType.RECEIVED:
-#             self.received_from += 1
-#         elif interaction_type == InteractionType.CC:
-#             self.cc_count += 1
-    
-#     def calculate_relationship_strength(self) -> float:
-#         return min(self.frequency / 10.0, 1.0)
-    
-#     def update_enrichment_data(self, data: Dict[str, Any], source: str, confidence: float):
-#         self.location = data.get('location', self.location)
-#         self.estimated_net_worth = data.get('estimated_net_worth', self.estimated_net_worth)
-#         self.job_title = data.get('job_title', self.job_title)
-#         self.company = data.get('company', self.company)
-#         self.data_source = source
-#         self.confidence = confidence
-
-# @dataclass
-# class ProviderStatus:
-#     provider: EmailProvider
-#     is_connected: bool = False
-#     error_message: str = ""
 
 
 """
 Enhanced Core models for the email enrichment system
-Phase 2-4: Premium APIs + AI + NLP Features
+Phase 2-4: Premium APIs + AI + NLP Features + Multiple Account Support
 """
 
 import sys
@@ -100,7 +10,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime,timezone
 from typing import List, Optional, Dict, Any, Union
 from enum import Enum
 import uuid
@@ -113,6 +23,41 @@ class EmailProvider(Enum):
     IMAP = "imap"
     ICLOUD = "icloud"
     OTHER = "other"
+    
+    @classmethod
+    def from_email_domain(cls, email: str) -> 'EmailProvider':
+        """Determine provider from email domain"""
+        domain = email.split('@')[1].lower() if '@' in email else ''
+        
+        if 'gmail.com' in domain:
+            return cls.GMAIL
+        elif 'outlook.com' in domain or 'hotmail.com' in domain or 'live.com' in domain:
+            return cls.OUTLOOK
+        elif 'yahoo.com' in domain:
+            return cls.YAHOO
+        elif 'icloud.com' in domain or 'me.com' in domain:
+            return cls.ICLOUD
+        else:
+            return cls.OTHER
+
+@dataclass
+class ProviderAccount:
+    """Represents a specific email account for a provider"""
+    provider: EmailProvider
+    email: str
+    account_id: str = ""
+    display_name: str = ""
+    credential_file: str = ""
+    is_active: bool = True
+    last_sync: Optional[datetime] = None
+    contacts_extracted: int = 0
+    last_error: str = ""
+    
+    def __post_init__(self):
+        if not self.account_id:
+            self.account_id = f"{self.provider.value}_{self.email}"
+        if not self.display_name:
+            self.display_name = f"{self.provider.value.title()} ({self.email})"
 
 class ContactType(Enum):
     PERSONAL = "personal"
@@ -253,6 +198,9 @@ class Interaction:
     message_id: str = ""
     direction: str = ""  # inbound/outbound
     
+    # Account tracking
+    source_account: str = ""  # Which account this interaction came from
+    
     # Enhanced interaction data
     content_preview: str = ""
     attachment_count: int = 0
@@ -273,7 +221,7 @@ class Interaction:
 
 @dataclass
 class Contact:
-    """Enhanced Contact model with AI and enrichment features"""
+    """Enhanced Contact model with AI and enrichment features + Multiple Account Support"""
     
     # Basic Information
     email: str = ""
@@ -282,6 +230,10 @@ class Contact:
     last_name: str = ""
     provider: EmailProvider = EmailProvider.OTHER
     contact_type: ContactType = ContactType.UNKNOWN
+    
+    # Account tracking
+    source_accounts: List[str] = field(default_factory=list)  # Which accounts this contact appears in
+    primary_source_account: str = ""  # Primary account for this contact
     
     # Contact Details
     phone_numbers: List[str] = field(default_factory=list)
@@ -308,7 +260,7 @@ class Contact:
     twitter_handle: str = ""
     github_username: str = ""
     
-    # Interaction Data
+    # Interaction Data - Global
     frequency: int = 0
     sent_to: int = 0
     received_from: int = 0
@@ -317,9 +269,14 @@ class Contact:
     meeting_count: int = 0
     call_count: int = 0
     
+    # Account-specific interaction stats
+    account_stats: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    
     # Timestamps
-    first_seen: datetime = field(default_factory=datetime.now)
-    last_seen: datetime = field(default_factory=datetime.now)
+    # first_seen: datetime = field(default_factory=datetime.now)
+    # last_seen: datetime = field(default_factory=datetime.now)
+    first_seen: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_seen:  datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     last_contacted: Optional[datetime] = None
     last_response: Optional[datetime] = None
     
@@ -349,6 +306,8 @@ class Contact:
         """Initialize computed fields"""
         if self.email and '@' in self.email:
             self.domain = self.email.split('@')[1]
+            # Auto-detect provider from email
+            self.provider = EmailProvider.from_email_domain(self.email)
         
         # Parse name if provided
         if self.name and not (self.first_name and self.last_name):
@@ -363,12 +322,24 @@ class Contact:
         if not hasattr(self.contact_score, 'last_calculated'):
             self.contact_score = ContactScore()
     
+    def add_source_account(self, account_id: str):
+        """Add a source account for this contact"""
+        if account_id not in self.source_accounts:
+            self.source_accounts.append(account_id)
+            self.account_stats[account_id] = {
+                'frequency': 0, 'sent_to': 0, 'received_from': 0,
+                'cc_count': 0, 'bcc_count': 0, 'meeting_count': 0, 'call_count': 0
+            }
+        
+        if not self.primary_source_account:
+            self.primary_source_account = account_id
+    
     def add_interaction(self, interaction: Interaction):
         """Add an interaction and update statistics"""
         self.interactions.append(interaction)
         self.frequency += 1
         
-        # Update type-specific counters
+        # Update global stats
         if interaction.type == InteractionType.SENT:
             self.sent_to += 1
         elif interaction.type == InteractionType.RECEIVED:
@@ -382,6 +353,29 @@ class Contact:
         elif interaction.type == InteractionType.CALL:
             self.call_count += 1
         
+        # Update account-specific stats
+        if interaction.source_account:
+            if interaction.source_account not in self.account_stats:
+                self.account_stats[interaction.source_account] = {
+                    'frequency': 0, 'sent_to': 0, 'received_from': 0,
+                    'cc_count': 0, 'bcc_count': 0, 'meeting_count': 0, 'call_count': 0
+                }
+            
+            self.account_stats[interaction.source_account]['frequency'] += 1
+            
+            if interaction.type == InteractionType.SENT:
+                self.account_stats[interaction.source_account]['sent_to'] += 1
+            elif interaction.type == InteractionType.RECEIVED:
+                self.account_stats[interaction.source_account]['received_from'] += 1
+            elif interaction.type == InteractionType.CC:
+                self.account_stats[interaction.source_account]['cc_count'] += 1
+            elif interaction.type == InteractionType.BCC:
+                self.account_stats[interaction.source_account]['bcc_count'] += 1
+            elif interaction.type == InteractionType.MEETING:
+                self.account_stats[interaction.source_account]['meeting_count'] += 1
+            elif interaction.type == InteractionType.CALL:
+                self.account_stats[interaction.source_account]['call_count'] += 1
+        
         # Update timestamps
         self.last_seen = max(self.last_seen, interaction.timestamp)
         
@@ -390,23 +384,45 @@ class Contact:
         elif interaction.direction == "inbound":
             self.last_response = interaction.timestamp
     
-    def calculate_relationship_strength(self) -> float:
-        """Calculate relationship strength using enhanced algorithm"""
-        if self.frequency == 0:
+    def get_account_stats(self, account_id: str) -> Dict[str, int]:
+        """Get interaction statistics for a specific account"""
+        return self.account_stats.get(account_id, {
+            'frequency': 0, 'sent_to': 0, 'received_from': 0,
+            'cc_count': 0, 'bcc_count': 0, 'meeting_count': 0, 'call_count': 0
+        })
+    
+    def calculate_relationship_strength(self, account_id: str = None) -> float:
+        """Calculate relationship strength, optionally for a specific account"""
+        if account_id and account_id in self.account_stats:
+            stats = self.account_stats[account_id]
+            frequency = stats['frequency']
+            sent_to = stats['sent_to']
+            received_from = stats['received_from']
+            meeting_count = stats['meeting_count']
+            call_count = stats['call_count']
+        else:
+            frequency = self.frequency
+            sent_to = self.sent_to
+            received_from = self.received_from
+            meeting_count = self.meeting_count
+            call_count = self.call_count
+        
+        if frequency == 0:
             return 0.0
         
         # Base interaction score (0-0.4)
-        base_score = min(self.frequency / 25.0, 0.4)
+        base_score = min(frequency / 25.0, 0.4)
         
         # Bidirectional communication bonus (0-0.3)
-        if self.sent_to > 0 and self.received_from > 0:
-            balance = min(self.sent_to, self.received_from) / max(self.sent_to, self.received_from)
+        if sent_to > 0 and received_from > 0:
+            balance = min(sent_to, received_from) / max(sent_to, received_from)
             bidirectional_bonus = balance * 0.3
         else:
             bidirectional_bonus = 0.0
         
         # Recency bonus (0-0.2)
-        days_since_last = (datetime.now() - self.last_seen).days
+        # days_since_last = (datetime.now() - self.last_seen).days
+        days_since_last = (datetime.now(timezone.utc) - self.last_seen).days
         if days_since_last <= 7:
             recency_bonus = 0.2
         elif days_since_last <= 30:
@@ -417,41 +433,10 @@ class Contact:
             recency_bonus = 0.05
         
         # Meeting/call bonus (0-0.1)
-        meeting_bonus = min((self.meeting_count + self.call_count) / 10.0, 0.1)
+        meeting_bonus = min((meeting_count + call_count) / 10.0, 0.1)
         
         total_score = base_score + bidirectional_bonus + recency_bonus + meeting_bonus
         return min(total_score, 1.0)
-    
-    def update_enrichment_data(self, 
-                             data: Dict[str, Any], 
-                             source: EnrichmentSource, 
-                             confidence: float,
-                             cost: float = 0.0):
-        """Update contact with enrichment data"""
-        
-        # Update basic fields
-        for field_name, value in data.items():
-            if value and hasattr(self, field_name):
-                setattr(self, field_name, value)
-        
-        # Update enrichment metadata
-        if source not in self.enrichment_metadata.sources_used:
-            self.enrichment_metadata.sources_used.append(source)
-        
-        self.enrichment_metadata.total_cost += cost
-        self.enrichment_metadata.confidence_scores[source.value] = confidence
-        self.enrichment_metadata.api_calls_made += 1
-        self.enrichment_metadata.last_enriched = datetime.now()
-        
-        # Update overall confidence (weighted average)
-        total_confidence = sum(self.enrichment_metadata.confidence_scores.values())
-        source_count = len(self.enrichment_metadata.confidence_scores)
-        self.confidence = total_confidence / source_count if source_count > 0 else 0.0
-        
-        # Add data source if not already present
-        source_name = source.value
-        if source_name not in self.data_sources:
-            self.data_sources.append(source_name)
     
     def add_social_profile(self, platform: str, url: str, username: str = "", **kwargs):
         """Add a social media profile"""
@@ -589,6 +574,37 @@ class Contact:
             'interaction_frequency_days': (self.last_seen - self.first_seen).days / max(len(self.interactions), 1)
         }
     
+    def update_enrichment_data(self, 
+                             data: Dict[str, Any], 
+                             source: EnrichmentSource, 
+                             confidence: float,
+                             cost: float = 0.0):
+        """Update contact with enrichment data"""
+        
+        # Update basic fields
+        for field_name, value in data.items():
+            if value and hasattr(self, field_name):
+                setattr(self, field_name, value)
+        
+        # Update enrichment metadata
+        if source not in self.enrichment_metadata.sources_used:
+            self.enrichment_metadata.sources_used.append(source)
+        
+        self.enrichment_metadata.total_cost += cost
+        self.enrichment_metadata.confidence_scores[source.value] = confidence
+        self.enrichment_metadata.api_calls_made += 1
+        self.enrichment_metadata.last_enriched = datetime.now()
+        
+        # Update overall confidence (weighted average)
+        total_confidence = sum(self.enrichment_metadata.confidence_scores.values())
+        source_count = len(self.enrichment_metadata.confidence_scores)
+        self.confidence = total_confidence / source_count if source_count > 0 else 0.0
+        
+        # Add data source if not already present
+        source_name = source.value
+        if source_name not in self.data_sources:
+            self.data_sources.append(source_name)
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert contact to dictionary for export"""
         return {
@@ -613,6 +629,8 @@ class Contact:
             'contact_score': self.contact_score.overall_score,
             'confidence': self.confidence,
             'data_sources': ', '.join(self.data_sources),
+            'source_accounts': ', '.join(self.source_accounts),
+            'primary_source_account': self.primary_source_account,
             'tags': ', '.join(self.tags),
             'first_seen': self.first_seen.isoformat(),
             'last_seen': self.last_seen.isoformat(),
@@ -641,6 +659,12 @@ class Contact:
         
         if 'data_sources' in data:
             contact.data_sources = data['data_sources'] if isinstance(data['data_sources'], list) else data['data_sources'].split(', ')
+        
+        if 'source_accounts' in data:
+            contact.source_accounts = data['source_accounts'] if isinstance(data['source_accounts'], list) else data['source_accounts'].split(', ')
+        
+        if 'primary_source_account' in data:
+            contact.primary_source_account = data['primary_source_account']
         
         # Numerical fields
         for field in ['frequency', 'sent_to', 'received_from', 'confidence']:
@@ -672,8 +696,9 @@ class EnrichmentResult:
 
 @dataclass
 class ProviderStatus:
-    """Enhanced provider status with enrichment info"""
+    """Enhanced provider status with enrichment info and multiple accounts"""
     provider: EmailProvider
+    accounts: List[ProviderAccount] = field(default_factory=list)
     is_connected: bool = False
     last_sync: Optional[datetime] = None
     api_calls_today: int = 0
@@ -685,6 +710,31 @@ class ProviderStatus:
     enrichment_sources: List[EnrichmentSource] = field(default_factory=list)
     daily_enrichment_budget: float = 0.0
     daily_enrichment_spent: float = 0.0
+    
+    def add_account(self, account: ProviderAccount):
+        """Add an account to this provider"""
+        existing_emails = [acc.email for acc in self.accounts]
+        if account.email not in existing_emails:
+            self.accounts.append(account)
+    
+    def get_account_by_email(self, email: str) -> Optional[ProviderAccount]:
+        """Get account by email address"""
+        for account in self.accounts:
+            if account.email.lower() == email.lower():
+                return account
+        return None
+    
+    def get_active_accounts(self) -> List[ProviderAccount]:
+        """Get all active accounts for this provider"""
+        return [account for account in self.accounts if account.is_active]
+    
+    def remove_account(self, email: str) -> bool:
+        """Remove account by email"""
+        for i, account in enumerate(self.accounts):
+            if account.email.lower() == email.lower():
+                del self.accounts[i]
+                return True
+        return False
 
 @dataclass
 class CampaignContact:
@@ -724,6 +774,22 @@ def merge_contacts(primary: Contact, secondary: Contact) -> Contact:
             setattr(merged, field, primary_val)
         elif secondary_val:
             setattr(merged, field, secondary_val)
+    
+    # Merge source accounts
+    merged.source_accounts = list(set(primary.source_accounts + secondary.source_accounts))
+    merged.primary_source_account = primary.primary_source_account or secondary.primary_source_account
+    
+    # Merge account stats
+    merged.account_stats = {}
+    for account_id in merged.source_accounts:
+        primary_stats = primary.account_stats.get(account_id, {})
+        secondary_stats = secondary.account_stats.get(account_id, {})
+        
+        merged_stats = {}
+        for stat_key in ['frequency', 'sent_to', 'received_from', 'cc_count', 'bcc_count', 'meeting_count', 'call_count']:
+            merged_stats[stat_key] = primary_stats.get(stat_key, 0) + secondary_stats.get(stat_key, 0)
+        
+        merged.account_stats[account_id] = merged_stats
     
     # Merge lists
     merged.phone_numbers = list(set(primary.phone_numbers + secondary.phone_numbers))
@@ -780,3 +846,70 @@ def calculate_similarity_score(contact1: Contact, contact2: Contact) -> float:
         factors += 1
     
     return score / factors if factors > 0 else 0.0
+
+def validate_email_format(email: str) -> bool:
+    """Validate email format"""
+    import re
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return bool(re.match(pattern, email))
+
+def extract_email_from_credential_filename(filename: str) -> Optional[str]:
+    """Extract email from credential filename"""
+    # Expected format: {provider}_{email}_credentials.json
+    try:
+        # Remove extension
+        name_without_ext = filename.replace('.json', '')
+        
+        # Split by underscores
+        parts = name_without_ext.split('_')
+        
+        # Find the email part (contains @)
+        for part in parts:
+            if '@' in part and validate_email_format(part):
+                return part
+        
+        return None
+    except Exception:
+        return None
+
+def generate_account_id(provider: EmailProvider, email: str) -> str:
+    """Generate a unique account ID"""
+    return f"{provider.value}_{email.lower()}"
+
+def parse_provider_account_string(provider_accounts_str: str) -> Dict[str, List[str]]:
+    """
+    Parse provider account string from CLI
+    
+    Args:
+        provider_accounts_str: String like "gmail=john@example.com,jane@gmail.com outlook=jane@company.com"
+    
+    Returns:
+        Dict mapping provider to list of emails
+    """
+    result = {}
+    
+    try:
+        # Split by spaces to get provider=emails pairs
+        pairs = provider_accounts_str.split()
+        
+        for pair in pairs:
+            if '=' not in pair:
+                continue
+            
+            provider, emails_str = pair.split('=', 1)
+            provider = provider.lower().strip()
+            
+            if emails_str.lower() == 'all':
+                result[provider] = ['all']
+            else:
+                emails = [email.strip() for email in emails_str.split(',')]
+                # Validate emails
+                valid_emails = [email for email in emails if validate_email_format(email)]
+                if valid_emails:
+                    result[provider] = valid_emails
+    
+    except Exception as e:
+        # Return empty dict on parsing error
+        return {}
+    
+    return result

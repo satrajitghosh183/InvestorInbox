@@ -438,7 +438,7 @@ class IPGeolocationService:
             
             # Parse timezone from Date header
             if date_header:
-                tz_match = re.search(r'([+-]\d{4}|[A-Z]{3,4}), date_header)
+                tz_match = re.search(r'([+-]\d{4}|[A-Z]{3,4})', date_header)
                 if tz_match:
                     tz_string = tz_match.group(1)
                     timezone_info.update(self._parse_timezone_string(tz_string))
@@ -710,7 +710,7 @@ class IPGeolocationService:
             consolidated['overall_location_confidence'] = sum(confidence_scores) / len(confidence_scores)
         
         # Add enrichment metadata
-        consolidated['location_enrichment_timestamp'] = datetime.now().isoformat()
+        consolidated['location_enrichment_timestamp'] = datetime.now(timezone.utc).isoformat()
         consolidated['location_sources_used'] = [
             source for source in [
                 location_data.get('geolocation_source'),

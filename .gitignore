@@ -1,23 +1,107 @@
 # Byte-compiled files
 __pycache__/
 *.py[cod]
+*.pyc
+*.pyo
 
-# Virtual env
+# Virtual environments
 venv/
+email_enrichment_env/
+*.venv
+env/
+ENV/
 
 # Logs
 logs/
+*.log
 
-# Config credentials
+# Personal configuration files and credentials
 config/gmail_credentials.json
 config/secrets.json
 config/providers_config.yaml
+config/gmail_*_credentials.json
+config/*_credentials.json
+config/enrichment_config.yaml
 
-# Data tokens
+# src/config directory (if any personal configs there)
+src/config/gmail_credentials.json
+src/config/secrets.json
+src/config/gmail_*_credentials.json
+src/config/*_credentials.json
+src/config/providers_config.yaml
+src/config/enrichment_config.yaml
+
+# Data and tokens
 data/tokens/
 data/gmail_token.json
+data/cache/
+data/models/
+*.token
+*.pkl
 
-# Exported images
+# Exports - ignore all generated files
+exports/
+exports/*
 exports/*.png
-notes_dont_add_to_github.md
 exports/*.xlsx
+exports/*.csv
+exports/*.json
+
+# Build artifacts
+dist/
+build/
+*.spec
+*.exe
+
+# Personal notes and documentation
+notes_dont_add_to_github.md
+personal_notes.md
+TODO.md
+
+# Environment variables
+.env
+.env.local
+.env.production
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+
+# API keys and secrets (additional patterns)
+*api_key*
+*secret*
+*password*
+*token*
+.secrets/
+
+# Email extraction outputs
+enriched_contacts_*.xlsx
+enriched_contacts_*.csv
+enriched_contacts_*.json
+contacts_*.xlsx
+email_data_*.json
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Test files
+test_output/
+*.test

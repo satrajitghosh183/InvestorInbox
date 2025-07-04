@@ -1,85 +1,6 @@
-# """
-# Configuration settings for Email Enrichment System - Real Gmail Version
-# """
-# import os
-# from pathlib import Path
-
-# # Project paths
-# PROJECT_ROOT = Path(__file__).parent.parent
-# DATA_DIR = PROJECT_ROOT / "data"
-# EXPORTS_DIR = PROJECT_ROOT / "exports"
-# CONFIG_DIR = PROJECT_ROOT / "config"
-
-# # Ensure directories exist
-# DATA_DIR.mkdir(exist_ok=True)
-# EXPORTS_DIR.mkdir(exist_ok=True)
-
-# # Gmail API settings
-# GMAIL_SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
-# GMAIL_CREDENTIALS_FILE = CONFIG_DIR / "gmail_credentials.json"
-# GMAIL_TOKEN_FILE = DATA_DIR / "gmail_token.json"
-
-# # Email processing settings for real data
-# MAX_EMAILS_TO_PROCESS = 1000  # Start with reasonable limit
-# DAYS_BACK = 30  # Last 30 days for initial test
-
-# # Enrichment settings - Start with simple domain-based enrichment
-# ENABLE_ENRICHMENT = True
-# ENRICHMENT_SOURCES = {
-#     'clearbit': {
-#         'enabled': False,  # Disable paid APIs for now
-#         'api_key': os.getenv('CLEARBIT_API_KEY', ''),
-#         'base_url': 'https://person.clearbit.com/v1/people/find'
-#     },
-#     'hunter': {
-#         'enabled': False,  # Disable paid APIs for now
-#         'api_key': os.getenv('HUNTER_API_KEY', ''),
-#         'base_url': 'https://api.hunter.io/v2/email-finder'
-#     },
-#     'domain_inference': {
-#         'enabled': True,  # Free domain-based enrichment
-#     },
-#     'mock': {
-#         'enabled': False,  # Disable mock data for real run
-#     }
-# }
-
-# # Export settings
-# EXCEL_FILENAME_TEMPLATE = "gmail_contacts_enriched_{timestamp}.xlsx"
-# DEFAULT_SHEET_NAME = "Gmail Contacts"
-
-# # Real data settings
-# DEMO_MODE = False  # Set to False for real data
-# SHOW_PROGRESS_BARS = True
-# COLORFUL_OUTPUT = True
-
-# # Email filtering settings
-# EXCLUDE_DOMAINS = [
-#     'noreply.gmail.com',
-#     'mail-noreply.google.com', 
-#     'noreply.youtube.com',
-#     'noreply.facebook.com',
-#     'no-reply.uber.com',
-#     'donotreply.com',
-#     'mailer-daemon',
-#     'postmaster'
-# ]
-
-# EXCLUDE_KEYWORDS = [
-#     'noreply', 'no-reply', 'donotreply', 'mailer-daemon',
-#     'postmaster', 'bounce', 'newsletter', 'notification',
-#     'automated', 'system', 'robot', 'bot'
-# ]
-
-# # Contact quality thresholds
-# MIN_EMAIL_FREQUENCY = 1  # Include all contacts for now
-# MIN_NAME_LENGTH = 2      # Minimum characters in name
-# REQUIRE_REAL_NAME = False  # Don't require real names initially
-
-
 
 """
-Updated Configuration for Multi-Provider Email Enrichment System
+Fixed Configuration for Multi-Provider Email Enrichment System
 Production-ready with environment variables, validation, and security
 """
 
@@ -92,7 +13,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 # Project paths
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).parent.parent.parent  # Go up to project root
 CONFIG_DIR = PROJECT_ROOT / "config"
 DATA_DIR = PROJECT_ROOT / "data"
 EXPORTS_DIR = PROJECT_ROOT / "exports"
@@ -317,20 +238,6 @@ ENRICHMENT_CONFIG = {
     }
 }
 
-# Database settings (for future use)
-DATABASE_CONFIG = {
-    'enabled': False,  # Currently using in-memory storage
-    'type': os.getenv('DATABASE_TYPE', 'postgresql'),
-    'host': os.getenv('DATABASE_HOST', 'localhost'),
-    'port': int(os.getenv('DATABASE_PORT', '5432')),
-    'name': os.getenv('DATABASE_NAME', 'email_enrichment'),
-    'user': os.getenv('DATABASE_USER', 'postgres'),
-    'password': os.getenv('DATABASE_PASSWORD', ''),
-    'ssl_mode': os.getenv('DATABASE_SSL_MODE', 'prefer'),
-    'pool_size': int(os.getenv('DATABASE_POOL_SIZE', '5')),
-    'max_overflow': int(os.getenv('DATABASE_MAX_OVERFLOW', '10'))
-}
-
 # API settings (for future web interface)
 API_CONFIG = {
     'enabled': False,  # Will be enabled in Phase 4
@@ -342,17 +249,6 @@ API_CONFIG = {
     'api_key': os.getenv('API_KEY'),
     'rate_limit_enabled': True,
     'rate_limit_per_minute': int(os.getenv('API_RATE_LIMIT', '100'))
-}
-
-# Monitoring and observability
-MONITORING_CONFIG = {
-    'enabled': ENVIRONMENT in [Environment.STAGING, Environment.PRODUCTION],
-    'metrics_enabled': True,
-    'health_check_enabled': True,
-    'sentry_dsn': os.getenv('SENTRY_DSN'),
-    'datadog_api_key': os.getenv('DATADOG_API_KEY'),
-    'prometheus_enabled': False,
-    'metrics_port': int(os.getenv('METRICS_PORT', '9090'))
 }
 
 # Feature flags
@@ -436,52 +332,52 @@ def validate_configuration() -> List[str]:
         if not directory.exists():
             issues.append(f"Required directory missing: {directory}")
     
-    # Validate security settings
-    if ENVIRONMENT == Environment.PRODUCTION:
-        if SECURITY_CONFIG.encrypt_tokens and not SECURITY_CONFIG.token_encryption_key:
-            issues.append("Token encryption key required in production")
-        
-        if DEBUG:
-            issues.append("DEBUG should be False in production")
-        
-        if LOGGING_CONFIG.log_sensitive_data:
-            issues.append("Sensitive data logging should be disabled in production")
-    
-    # Check provider credentials
+    # Check provider credentials (make these warnings, not errors)
     providers_configured = 0
     
-    if GMAIL_CREDENTIALS_FILE.exists():
+    if GMAIL_CREDENTIALS_FILE.exists() or any(CONFIG_DIR.glob("gmail_*_credentials.json")):
         providers_configured += 1
-    else:
-        issues.append("Gmail credentials file not found (optional)")
     
     outlook_creds = get_env_vars_for_provider('outlook')
     if outlook_creds.get('client_id') and outlook_creds.get('client_secret'):
         providers_configured += 1
-    else:
-        issues.append("Outlook credentials not configured (optional)")
     
+    yahoo_creds = get_env_vars_for_provider('yahoo')
+    if yahoo_creds.get('email') and yahoo_creds.get('password'):
+        providers_configured += 1
+    
+    icloud_creds = get_env_vars_for_provider('icloud')
+    if icloud_creds.get('email') and icloud_creds.get('app_password'):
+        providers_configured += 1
+    
+    # Only warn if no providers are configured
     if providers_configured == 0:
-        issues.append("No email providers configured - at least one provider is required")
-    
-    # Validate enrichment settings
-    enabled_sources = [k for k, v in ENRICHMENT_CONFIG['sources'].items() if v.get('enabled')]
-    if ENRICHMENT_CONFIG['enable_enrichment'] and not enabled_sources:
-        issues.append("Enrichment enabled but no sources configured")
+        issues.append("No email providers configured - at least one provider is recommended")
     
     return issues
 
 def get_configuration_summary() -> Dict[str, Any]:
     """Get a summary of current configuration"""
+    # Count configured providers
+    providers_configured = []
+    
+    if GMAIL_CREDENTIALS_FILE.exists() or any(CONFIG_DIR.glob("gmail_*_credentials.json")):
+        providers_configured.append('gmail')
+    
+    if get_env_vars_for_provider('outlook'):
+        providers_configured.append('outlook')
+    
+    if get_env_vars_for_provider('yahoo'):
+        providers_configured.append('yahoo')
+    
+    if get_env_vars_for_provider('icloud'):
+        providers_configured.append('icloud')
+    
     return {
         'environment': ENVIRONMENT.value,
         'debug': DEBUG,
         'app_version': APP_VERSION,
-        'providers_configured': [
-            provider for provider in ['gmail', 'outlook', 'yahoo', 'icloud'] 
-            if (CONFIG_DIR / f"{provider}_credentials.json").exists() or 
-               bool(get_env_vars_for_provider(provider))
-        ],
+        'providers_configured': providers_configured,
         'enrichment_sources': [
             k for k, v in ENRICHMENT_CONFIG['sources'].items() 
             if v.get('enabled')
@@ -506,14 +402,12 @@ if _main_config:
     # Update global settings with values from config file
     globals().update(_main_config.get('global_settings', {}))
 
-# Validate configuration on import
+# Validate configuration on import (but make it non-blocking)
 _config_issues = validate_configuration()
 if _config_issues and not TESTING:
-    print("Configuration Issues Found:")
+    print("Configuration Notes:")
     for issue in _config_issues:
         print(f"  - {issue}")
-    if any("required" in issue.lower() for issue in _config_issues):
-        print("\nSome issues are critical. Please fix them before running the application.")
 
 # Export commonly used settings
 __all__ = [
