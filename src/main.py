@@ -3,9 +3,19 @@ import os
 import asyncio
 import argparse
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime,timezone
 from collections import defaultdict
 import json
+import os
+import sys
+
+# Force UTF-8 encoding for console output on Windows
+if sys.platform == 'win32':
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
+    # For Python 3.7+
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+
 
 # Add src directory to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -43,12 +53,12 @@ except ImportError as e:
 try:
     from exporters.excel_exporter import EnhancedExcelExporter
     EXCEL_EXPORT_AVAILABLE = True
-    print("✅ Excel exporter loaded from exporters directory")
+    print("[OK] Excel exporter loaded from exporters directory")
 except ImportError:
     try:
         from excel_exporter import EnhancedExcelExporter
         EXCEL_EXPORT_AVAILABLE = True
-        print("✅ Excel exporter loaded from current directory")
+        print("[OK] Excel exporter loaded from current directory")
     except ImportError:
         EXCEL_EXPORT_AVAILABLE = False
         print("⚠️ Excel exporter not available")
@@ -62,7 +72,7 @@ def check_all_provider_status():
     print("=" * 60)
     
     # Email Providers
-    print("\n📧 EMAIL PROVIDERS:")
+    print("\n[EMAIL] EMAIL PROVIDERS:")
     print("-" * 20)
     
     config_dir = Path("config")
@@ -71,7 +81,7 @@ def check_all_provider_status():
     gmail_creds = config_dir / "gmail_credentials.json"
     gmail_specific_creds = list(config_dir.glob("gmail_*_credentials.json"))
     gmail_configured = gmail_creds.exists() or bool(gmail_specific_creds)
-    print(f"  Gmail: {'✅ CONFIGURED' if gmail_configured else '❌ NOT CONFIGURED'}")
+    print(f"  Gmail: {'[OK] CONFIGURED' if gmail_configured else '[FAIL] NOT CONFIGURED'}")
     
     if gmail_configured:
         if gmail_creds.exists():
@@ -91,7 +101,7 @@ def check_all_provider_status():
     ]
     
     for provider, configured in providers:
-        print(f"  {provider}: {'✅ CONFIGURED' if configured else '❌ NOT CONFIGURED'}")
+        print(f"  {provider}: {'[OK] CONFIGURED' if configured else '[FAIL] NOT CONFIGURED'}")
     
     # Enrichment Services
     print("\n🔍 ENRICHMENT SERVICES:")
@@ -103,7 +113,7 @@ def check_all_provider_status():
         ("People Data Labs", os.getenv('PDL_API_KEY')),
       ]
     for service, configured in enrichment_services:
-        print(f"  {service}: {'✅ CONFIGURED' if configured else '❌ NOT CONFIGURED'}")
+        print(f"  {service}: {'[OK] CONFIGURED' if configured else '[FAIL] NOT CONFIGURED'}")
     
     # AI Services
     print("\n🤖 AI SERVICES:")
@@ -116,10 +126,10 @@ def check_all_provider_status():
     ]
     
     for service, available in ai_services:
-        print(f"  {service}: {'✅ AVAILABLE' if available else '❌ LIMITED'}")
+        print(f"  {service}: {'[OK] AVAILABLE' if available else '[FAIL] LIMITED'}")
     
     # System Components
-    print("\n📊 SYSTEM COMPONENTS:")
+    print("\n[STATS] SYSTEM COMPONENTS:")
     print("-" * 20)
     
     components = [
@@ -130,7 +140,7 @@ def check_all_provider_status():
     ]
     
     for component, available in components:
-        print(f"  {component}: {'✅ AVAILABLE' if available else '❌ LIMITED'}")
+        print(f"  {component}: {'[OK] AVAILABLE' if available else '[FAIL] LIMITED'}")
     
     # Count configured services
     # email_configured = sum([gmail_configured, *[configured for _, configured in providers]])
@@ -147,7 +157,21 @@ def check_all_provider_status():
     if email_configured == 0:
         print("\n⚠️  WARNING: No email providers configured!")
         print("   At least one email provider is required.")
-
+def safe_datetime_diff(dt1, dt2=None):
+    """Safely calculate datetime difference handling timezone-aware/naive datetimes"""
+    if dt2 is None:
+        dt2 = datetime.now()
+    
+    # If one is timezone-aware and other is naive, make both timezone-aware
+    if dt1.tzinfo is not None and dt2.tzinfo is None:
+        dt2 = dt2.replace(tzinfo=timezone.utc)
+    elif dt1.tzinfo is None and dt2.tzinfo is not None:
+        dt1 = dt1.replace(tzinfo=timezone.utc)
+    elif dt1.tzinfo is None and dt2.tzinfo is None:
+        # Both naive, use as-is
+        pass
+    
+    return (dt2 - dt1).days
 def check_huggingface_availability():
     """Check if HuggingFace NLP is available"""
     try:
@@ -160,7 +184,7 @@ def check_huggingface_availability():
 async def extract_and_score_contacts(factory, provider_filter=None, days_back=30, max_emails=1000, use_enhanced_scoring=True):
     """Extract contacts and apply enhanced scoring"""
     
-    print("🚀 ENHANCED CONTACT EXTRACTION & SCORING:")
+    print("[START] ENHANCED CONTACT EXTRACTION & SCORING:")
     print("=" * 55)
     
     # Initialize enhanced scorer
@@ -168,7 +192,7 @@ async def extract_and_score_contacts(factory, provider_filter=None, days_back=30
     if use_enhanced_scoring and ENHANCED_SCORING_AVAILABLE:
         try:
             scorer = EnhancedContactScoringEngine()
-            print("✅ Enhanced scoring engine initialized")
+            print("[OK] Enhanced scoring engine initialized")
         except Exception as e:
             print(f"⚠️ Enhanced scoring failed to initialize: {e}")
             print("📝 Falling back to basic scoring")
@@ -178,11 +202,11 @@ async def extract_and_score_contacts(factory, provider_filter=None, days_back=30
     try:
         providers = await factory.get_all_available_providers()
     except Exception as e:
-        print(f"❌ Failed to get providers: {e}")
+        print(f"[FAIL] Failed to get providers: {e}")
         return [], {}, None
     
     if not providers:
-        print("❌ No providers available")
+        print("[FAIL] No providers available")
         return [], {}, scorer
     
     # Filter providers if specified
@@ -194,11 +218,11 @@ async def extract_and_score_contacts(factory, provider_filter=None, days_back=30
         providers = filtered_providers
     
     if not providers:
-        print("❌ No matching providers found")
+        print("[FAIL] No matching providers found")
         return [], {}, scorer
     
     # Extract contacts from all providers
-    print(f"📧 Processing {sum(len(instances) for instances in providers.values())} accounts...")
+    print(f"[EMAIL] Processing {sum(len(instances) for instances in providers.values())} accounts...")
     
     all_contacts = await factory.extract_contacts_from_providers(
         providers,
@@ -207,7 +231,7 @@ async def extract_and_score_contacts(factory, provider_filter=None, days_back=30
     )
     
     # Show extraction summary
-    print(f"\n📊 EXTRACTION SUMMARY:")
+    print(f"\n[STATS] EXTRACTION SUMMARY:")
     total_contacts = 0
     
     for provider_name, contacts in all_contacts.items():
@@ -218,14 +242,14 @@ async def extract_and_score_contacts(factory, provider_filter=None, days_back=30
     # Merge contacts across all accounts
     merged_contacts = factory.merge_contacts_from_providers(all_contacts)
     
-    print(f"\n📊 MERGE SUMMARY:")
+    print(f"\n[STATS] MERGE SUMMARY:")
     print(f"   Total contacts before merge: {total_contacts}")
     print(f"   Unique contacts after merge: {len(merged_contacts)}")
     print(f"   Deduplication rate: {((total_contacts - len(merged_contacts))/total_contacts*100):.1f}%" if total_contacts > 0 else "   Deduplication rate: 0%")
     
     # Apply enhanced scoring
     if scorer and merged_contacts:
-        print(f"\n🎯 APPLYING ENHANCED SCORING:")
+        print(f"\n[TARGET] APPLYING ENHANCED SCORING:")
         print("-" * 30)
         
         try:
@@ -235,9 +259,9 @@ async def extract_and_score_contacts(factory, provider_filter=None, days_back=30
             # Generate scoring insights
             insights = scorer.generate_enhanced_scoring_insights(merged_contacts)
             
-            print(f"✅ Scored {len(scores)} contacts successfully")
+            print(f"[OK] Scored {len(scores)} contacts successfully")
             print(f"📈 Average score: {insights['average_score']:.2f}")
-            print(f"🏆 High-value contacts: {insights['score_distribution']['high_value']}")
+            print(f"[TOP] High-value contacts: {insights['score_distribution']['high_value']}")
             print(f"🔗 Social media coverage: {insights['social_media_coverage']['total_with_social']} contacts")
             print(f"🤖 AI analysis coverage: {insights['ai_analysis_coverage']['sentiment_analysis']} contacts")
             
@@ -245,12 +269,12 @@ async def extract_and_score_contacts(factory, provider_filter=None, days_back=30
             ai_engines = insights['ai_analysis_coverage']['ai_engines_available']
             enrichment_sources = insights['enrichment_sources']
             
-            print(f"\n🔧 ACTIVE INTEGRATIONS:")
-            print(f"   HuggingFace NLP: {'✅' if ai_engines['huggingface'] else '❌'}")
-            print(f"   OpenAI Analysis: {'✅' if ai_engines['openai'] else '❌'}")
-            print(f"   Clearbit API: {'✅' if enrichment_sources['clearbit_available'] else '❌'}")
-            print(f"   Hunter.io API: {'✅' if enrichment_sources['hunter_available'] else '❌'}")
-            print(f"   People Data Labs: {'✅' if enrichment_sources['pdl_available'] else '❌'}")
+            print(f"\n[CONFIG] ACTIVE INTEGRATIONS:")
+            print(f"   HuggingFace NLP: {'[OK]' if ai_engines['huggingface'] else '[FAIL]'}")
+            print(f"   OpenAI Analysis: {'[OK]' if ai_engines['openai'] else '[FAIL]'}")
+            print(f"   Clearbit API: {'[OK]' if enrichment_sources['clearbit_available'] else '[FAIL]'}")
+            print(f"   Hunter.io API: {'[OK]' if enrichment_sources['hunter_available'] else '[FAIL]'}")
+            print(f"   People Data Labs: {'[OK]' if enrichment_sources['pdl_available'] else '[FAIL]'}")
             
         except Exception as e:
             print(f"⚠️ Enhanced scoring failed: {e}")
@@ -273,8 +297,8 @@ async def enrich_contacts_with_apis(contacts, enricher):
         enriched_count = sum(1 for c in enriched_contacts if c.data_sources)
         enrichment_rate = (enriched_count / len(contacts)) * 100 if contacts else 0
         
-        print(f"✅ Enrichment completed")
-        print(f"📊 {enriched_count}/{len(contacts)} contacts enriched ({enrichment_rate:.1f}%)")
+        print(f"[OK] Enrichment completed")
+        print(f"[STATS] {enriched_count}/{len(contacts)} contacts enriched ({enrichment_rate:.1f}%)")
         
         # Show enrichment sources used
         sources_used = set()
@@ -282,7 +306,7 @@ async def enrich_contacts_with_apis(contacts, enricher):
             sources_used.update(contact.data_sources)
         
         if sources_used:
-            print(f"🔧 Sources used: {', '.join(sources_used)}")
+            print(f"[CONFIG] Sources used: {', '.join(sources_used)}")
         
         return enriched_contacts
         
@@ -295,7 +319,7 @@ async def generate_comprehensive_report(contacts, scorer, output_format="console
     """Generate comprehensive contact analysis report"""
     
     if not contacts:
-        print("❌ No contacts to analyze")
+        print("[FAIL] No contacts to analyze")
         return
     
     print(f"\n📋 COMPREHENSIVE CONTACT ANALYSIS:")
@@ -306,7 +330,7 @@ async def generate_comprehensive_report(contacts, scorer, output_format="console
     total_interactions = sum(c.frequency for c in contacts)
     avg_interactions = total_interactions / total_contacts if total_contacts > 0 else 0
     
-    print(f"\n📊 OVERALL STATISTICS:")
+    print(f"\n[STATS] OVERALL STATISTICS:")
     print(f"   Total Contacts: {total_contacts:,}")
     print(f"   Total Interactions: {total_interactions:,}")
     print(f"   Average Interactions/Contact: {avg_interactions:.1f}")
@@ -316,7 +340,7 @@ async def generate_comprehensive_report(contacts, scorer, output_format="console
         try:
             insights = scorer.generate_enhanced_scoring_insights(contacts)
             
-            print(f"\n🎯 SCORING ANALYSIS:")
+            print(f"\n[TARGET] SCORING ANALYSIS:")
             score_dist = insights['score_distribution']
             print(f"   High-Value Contacts (≥0.8): {score_dist['high_value']} ({score_dist['high_value']/total_contacts*100:.1f}%)")
             print(f"   Medium-Value Contacts (0.5-0.8): {score_dist['medium_value']} ({score_dist['medium_value']/total_contacts*100:.1f}%)")
@@ -380,7 +404,7 @@ async def generate_comprehensive_report(contacts, scorer, output_format="console
     with_company = sum(1 for c in contacts if c.company)
     enriched_contacts = sum(1 for c in contacts if c.data_sources)
     
-    print(f"\n📊 DATA QUALITY:")
+    print(f"\n[STATS] DATA QUALITY:")
     print(f"   With Location: {with_location} ({with_location/total_contacts*100:.1f}%)")
     print(f"   With Job Title: {with_title} ({with_title/total_contacts*100:.1f}%)")
     print(f"   With Company: {with_company} ({with_company/total_contacts*100:.1f}%)")
@@ -389,7 +413,7 @@ async def generate_comprehensive_report(contacts, scorer, output_format="console
 async def show_top_contacts_detailed(contacts, scorer=None, count=10):
     """Show detailed view of top contacts"""
     
-    print(f"\n🏆 TOP {count} CONTACTS (DETAILED VIEW):")
+    print(f"\n[TOP] TOP {count} CONTACTS (DETAILED VIEW):")
     print("=" * 60)
     
     # Sort contacts by score if scorer available, otherwise by interaction count
@@ -417,17 +441,18 @@ async def show_top_contacts_detailed(contacts, scorer=None, count=10):
         
         # Basic contact info
         relationship_strength = contact.calculate_relationship_strength()
-        days_since_last = (datetime.now() - contact.last_seen).days
+        # days_since_last = (datetime.now() - contact.last_seen).days
+        days_since_last = safe_datetime_diff(contact.last_seen)
         
         print(f"\n{i:2d}. {contact.name or 'Unknown Name'}")
-        print(f"    📧 {contact.email}")
+        print(f"    [EMAIL] {contact.email}")
         print(f"    🏢 {contact.company or 'Unknown Company'}")
         print(f"    💼 {contact.job_title or 'Unknown Title'}")
         print(f"    📍 {contact.location or 'Unknown Location'}")
         print(f"    💰 {contact.estimated_net_worth or 'Unknown'}")
         
-        print(f"    📊 Interactions: {contact.frequency} | Strength: {relationship_strength:.1%} | Last: {days_since_last}d ago")
-        print(f"    🎯 Score: {overall_score} | Deal Potential: {deal_potential} | Social: {social_influence}")
+        print(f"    [STATS] Interactions: {contact.frequency} | Strength: {relationship_strength:.1%} | Last: {days_since_last}d ago")
+        print(f"    [TARGET] Score: {overall_score} | Deal Potential: {deal_potential} | Social: {social_influence}")
         
         # Social profiles
         if contact.social_profiles:
@@ -442,7 +467,7 @@ async def show_top_contacts_detailed(contacts, scorer=None, count=10):
         
         # Account sources
         if hasattr(contact, 'source_accounts') and contact.source_accounts:
-            print(f"    📧 Found in: {', '.join(contact.source_accounts)}")
+            print(f"    [EMAIL] Found in: {', '.join(contact.source_accounts)}")
 
 async def export_enhanced_data(contacts, export_format, filename=None, include_analytics=True):
     """Export with enhanced data and analytics"""
@@ -457,7 +482,7 @@ async def export_enhanced_data(contacts, export_format, filename=None, include_a
             if include_analytics:
                 # Create comprehensive analytics dashboard
                 export_path = await exporter.export_analytics_dashboard(contacts)
-                print(f"✅ Analytics dashboard exported: {export_path}")
+                print(f"[OK] Analytics dashboard exported: {export_path}")
             else:
                 # Standard export with analytics
                 export_path = await exporter.export_contacts(
@@ -466,30 +491,30 @@ async def export_enhanced_data(contacts, export_format, filename=None, include_a
                     include_analytics=True,
                     include_charts=True
                 )
-                print(f"✅ Excel export completed: {export_path}")
+                print(f"[OK] Excel export completed: {export_path}")
             
             return export_path
         
         elif export_format == "excel" and not EXCEL_EXPORT_AVAILABLE:
-            print("❌ Excel export requested but module not available")
+            print("[FAIL] Excel export requested but module not available")
             print("💡 Install dependencies: pip install openpyxl pandas")
             # Fall back to CSV
             export_path = await export_to_enhanced_csv(contacts, filename)
-            print(f"✅ Exported as CSV instead: {export_path}")
+            print(f"[OK] Exported as CSV instead: {export_path}")
             return export_path
         
         elif export_format == "csv":
             export_path = await export_to_enhanced_csv(contacts, filename)
-            print(f"✅ CSV export completed: {export_path}")
+            print(f"[OK] CSV export completed: {export_path}")
             return export_path
         
         elif export_format == "json":
             export_path = await export_to_enhanced_json(contacts, filename)
-            print(f"✅ JSON export completed: {export_path}")
+            print(f"[OK] JSON export completed: {export_path}")
             return export_path
     
     except Exception as e:
-        print(f"❌ Export failed: {e}")
+        print(f"[FAIL] Export failed: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -536,7 +561,7 @@ async def export_to_enhanced_csv(contacts, filename=None):
                 'Received_From': contact.received_from,
                 'Meeting_Count': contact.meeting_count,
                 'Relationship_Strength': f"{contact.calculate_relationship_strength():.1%}",
-                'Days_Since_Last_Contact': (datetime.now() - contact.last_seen).days,
+                'Days_Since_Last_Contact': safe_datetime_diff(contact.last_seen),
                 'Social_Profiles': len(contact.social_profiles),
                 'Data_Sources': ', '.join(contact.data_sources),
                 'Confidence': contact.confidence,
@@ -560,7 +585,7 @@ async def export_to_enhanced_csv(contacts, filename=None):
         return str(csv_path)
     
     except ImportError:
-        print("❌ pandas not available for CSV export")
+        print("[FAIL] pandas not available for CSV export")
         return None
 
 async def export_to_enhanced_json(contacts, filename=None):
@@ -715,7 +740,7 @@ async def main():
     
     # Handle status command
     if args.status:
-        print("🚀 ENHANCED EMAIL ENRICHMENT SYSTEM")
+        print("[START] ENHANCED EMAIL ENRICHMENT SYSTEM")
         print("=" * 70)
         print(f"🏷️  Version: 2.1.0 (Enhanced AI & API Integration)")
         print(f"🌍 Environment: Production-Ready")
@@ -736,20 +761,20 @@ async def main():
                 from ai.huggingface_nlp import HuggingFaceNLPEngine
                 nlp_engine = HuggingFaceNLPEngine()
                 if nlp_engine.enabled:
-                    print("✅ HuggingFace NLP: AVAILABLE")
+                    print("[OK] HuggingFace NLP: AVAILABLE")
                     
                     # Test sentiment analysis
                     test_result = await nlp_engine.analyze_sentiment("This is a great opportunity for collaboration!")
                     if test_result:
-                        print(f"   📊 Sentiment Test: {test_result}")
+                        print(f"   [STATS] Sentiment Test: {test_result}")
                     else:
                         print("   ⚠️ Sentiment analysis not working")
                 else:
-                    print("❌ HuggingFace NLP: DISABLED")
+                    print("[FAIL] HuggingFace NLP: DISABLED")
             except Exception as e:
-                print(f"❌ HuggingFace NLP: ERROR - {e}")
+                print(f"[FAIL] HuggingFace NLP: ERROR - {e}")
         else:
-            print("❌ HuggingFace NLP: NOT AVAILABLE (missing dependencies)")
+            print("[FAIL] HuggingFace NLP: NOT AVAILABLE (missing dependencies)")
         
         # Test OpenAI
         if os.getenv('OPENAI_API_KEY'):
@@ -757,25 +782,25 @@ async def main():
                 from ai.openai_analyzer import OpenAIEmailAnalyzer
                 openai_analyzer = OpenAIEmailAnalyzer()
                 if openai_analyzer.enabled:
-                    print("✅ OpenAI Analysis: AVAILABLE")
+                    print("[OK] OpenAI Analysis: AVAILABLE")
                 else:
-                    print("❌ OpenAI Analysis: DISABLED")
+                    print("[FAIL] OpenAI Analysis: DISABLED")
             except Exception as e:
-                print(f"❌ OpenAI Analysis: ERROR - {e}")
+                print(f"[FAIL] OpenAI Analysis: ERROR - {e}")
         else:
-            print("❌ OpenAI Analysis: NO API KEY")
+            print("[FAIL] OpenAI Analysis: NO API KEY")
         
         # Test Enhanced Scoring
         if ENHANCED_SCORING_AVAILABLE:
             try:
                 scorer = EnhancedContactScoringEngine()
-                print("✅ Enhanced Scoring: AVAILABLE")
-                print(f"   🔧 AI Engines: HF={scorer.nlp_engine is not None}, OpenAI={scorer.openai_analyzer is not None}")
-                print(f"   🔧 APIs: Clearbit={scorer.clearbit_source is not None}, Hunter={scorer.hunter_source is not None}, PDL={scorer.pdl_source is not None}")
+                print("[OK] Enhanced Scoring: AVAILABLE")
+                print(f"   [CONFIG] AI Engines: HF={scorer.nlp_engine is not None}, OpenAI={scorer.openai_analyzer is not None}")
+                print(f"   [CONFIG] APIs: Clearbit={scorer.clearbit_source is not None}, Hunter={scorer.hunter_source is not None}, PDL={scorer.pdl_source is not None}")
             except Exception as e:
-                print(f"❌ Enhanced Scoring: ERROR - {e}")
+                print(f"[FAIL] Enhanced Scoring: ERROR - {e}")
         else:
-            print("❌ Enhanced Scoring: NOT AVAILABLE")
+            print("[FAIL] Enhanced Scoring: NOT AVAILABLE")
         
         return
     
@@ -794,10 +819,10 @@ async def main():
         
         for api_name, env_var in apis_to_test:
             if os.getenv(env_var):
-                print(f"✅ {api_name}: API KEY CONFIGURED")
+                print(f"[OK] {api_name}: API KEY CONFIGURED")
                 # Here you could add actual API testing
             else:
-                print(f"❌ {api_name}: NO API KEY")
+                print(f"[FAIL] {api_name}: NO API KEY")
         
         return
     
@@ -805,16 +830,16 @@ async def main():
     if args.list_accounts:
         configs = factory.load_provider_configs()
         if not configs:
-            print("❌ No accounts configured")
+            print("[FAIL] No accounts configured")
             return
         
-        print("📧 AVAILABLE EMAIL ACCOUNTS:")
+        print("[EMAIL] AVAILABLE EMAIL ACCOUNTS:")
         print("=" * 40)
         
         total_accounts = 0
         for provider_name, config in configs.items():
             accounts = config.get('accounts', [])
-            print(f"\n📧 {provider_name.upper()}:")
+            print(f"\n[EMAIL] {provider_name.upper()}:")
             
             if accounts:
                 for account in accounts:
@@ -822,20 +847,20 @@ async def main():
                     print(f"   • {display}")
                     total_accounts += 1
             else:
-                print("   ❌ No accounts found")
+                print("   [FAIL] No accounts found")
         
-        print(f"\n📊 Total accounts available: {total_accounts}")
+        print(f"\n[STATS] Total accounts available: {total_accounts}")
         return
     
     if args.test_accounts:
         try:
             providers = await factory.get_all_available_providers()
         except Exception as e:
-            print(f"❌ Failed to get providers: {e}")
+            print(f"[FAIL] Failed to get providers: {e}")
             return
         
         if not providers:
-            print("❌ No providers available for testing")
+            print("[FAIL] No providers available for testing")
             return
         
         # Filter providers if specified
@@ -852,7 +877,7 @@ async def main():
         successful_tests = 0
         
         for provider_name, results in test_results.items():
-            print(f"\n📧 {provider_name.upper()}:")
+            print(f"\n[EMAIL] {provider_name.upper()}:")
             
             for result in results:
                 total_tested += 1
@@ -862,12 +887,12 @@ async def main():
                 
                 if success:
                     successful_tests += 1
-                    print(f"   ✅ {email}: CONNECTED ({processing_time:.2f}s)")
+                    print(f"   [OK] {email}: CONNECTED ({processing_time:.2f}s)")
                 else:
                     error = result.get('error', 'Unknown error')
-                    print(f"   ❌ {email}: FAILED - {error}")
+                    print(f"   [FAIL] {email}: FAILED - {error}")
         
-        print(f"\n📊 TEST SUMMARY:")
+        print(f"\n[STATS] TEST SUMMARY:")
         print(f"   Total accounts tested: {total_tested}")
         print(f"   Successful connections: {successful_tests}")
         print(f"   Success rate: {(successful_tests/total_tested*100):.1f}%" if total_tested > 0 else "   Success rate: 0%")
@@ -880,7 +905,7 @@ async def main():
         # Check if any providers are configured
         configs = factory.load_provider_configs()
         if not configs:
-            print("❌ No providers configured")
+            print("[FAIL] No providers configured")
             print("💡 Run --status to see setup options")
             return
         
@@ -897,7 +922,7 @@ async def main():
         )
         
         if not merged_contacts:
-            print("❌ No contacts found")
+            print("[FAIL] No contacts found")
             await factory.cleanup_all_providers()
             return
         
@@ -918,7 +943,7 @@ async def main():
             print(f"\n🔄 RE-SCORING AFTER ENRICHMENT:")
             try:
                 await scorer.score_contacts_batch(merged_contacts)
-                print("✅ Contacts re-scored with enriched data")
+                print("[OK] Contacts re-scored with enriched data")
             except Exception as e:
                 print(f"⚠️ Re-scoring failed: {e}")
         
@@ -941,8 +966,8 @@ async def main():
             if export_path:
                 print(f"\n📋 EXPORT SUMMARY:")
                 print(f"   📁 File: {export_path}")
-                print(f"   📊 Contacts: {len(merged_contacts)}")
-                print(f"   🎯 Enhanced Scoring: {'Yes' if scorer else 'No'}")
+                print(f"   [STATS] Contacts: {len(merged_contacts)}")
+                print(f"   [TARGET] Enhanced Scoring: {'Yes' if scorer else 'No'}")
                 print(f"   🔍 API Enrichment: {'Yes' if args.enrich else 'No'}")
                 print(f"   📈 Analytics: {'Yes' if args.analytics else 'No'}")
         
@@ -951,7 +976,7 @@ async def main():
             try:
                 insights = scorer.generate_enhanced_scoring_insights(merged_contacts)
                 
-                print(f"\n🎯 ENHANCED SCORING INSIGHTS:")
+                print(f"\n[TARGET] ENHANCED SCORING INSIGHTS:")
                 print("=" * 40)
                 print(f"   Average Score: {insights['average_score']:.2f}/1.0")
                 print(f"   High-Value Contacts: {insights['score_distribution']['high_value']}")
@@ -973,7 +998,7 @@ async def main():
         return
     
     # Default help message with enhanced options
-    print("🚀 ENHANCED EMAIL ENRICHMENT SYSTEM")
+    print("[START] ENHANCED EMAIL ENRICHMENT SYSTEM")
     print("=" * 70)
     print("Version 2.1.0 - AI & API Integration")
     print("\n🔍 Status & Testing:")
@@ -982,18 +1007,18 @@ async def main():
     print("  --test-apis                 Test enrichment API connections")
     print("  --list-accounts             List all available email accounts")
     print("  --test-accounts             Test email account connections")
-    print("\n📧 Contact Extraction & Analysis:")
+    print("\n[EMAIL] Contact Extraction & Analysis:")
     print("  --extract                   Extract and analyze contacts")
     print("  --providers gmail outlook   Specify provider(s) to use")
     print("  --days-back 60              Look back N days (default: 30)")
     print("  --max-emails 2000           Max emails per account (default: 1000)")
-    print("\n🎯 Enhanced Features:")
+    print("\n[TARGET] Enhanced Features:")
     print("  --enhanced-scoring          Use AI-powered scoring (default: ON)")
     print("  --basic-scoring             Use basic scoring only")
     print("  --enrich                    Enrich with API data (Clearbit, Hunter, PDL)")
     print("  --detailed-report           Generate comprehensive analysis report")
     print("  --top-contacts 20           Number of top contacts to show (default: 10)")
-    print("\n📊 Export & Analytics:")
+    print("\n[STATS] Export & Analytics:")
     print("  --export-format excel       Export format (excel/csv/json)")
     print("  --analytics                 Include comprehensive analytics")
     print("  --output-file name          Custom output filename")
@@ -1012,7 +1037,7 @@ async def main():
     print("\n  # Advanced: Full pipeline with all features")
     print("  python main.py --extract --enhanced-scoring --enrich --detailed-report \\")
     print("                 --export-format excel --analytics --top-contacts 25")
-    print("\n🔧 Features Available:")
+    print("\n[CONFIG] Features Available:")
     features = [
         ("Enhanced AI Scoring", ENHANCED_SCORING_AVAILABLE),
         ("API Enrichment", ENRICHMENT_AVAILABLE),
@@ -1023,7 +1048,7 @@ async def main():
     ]
     
     for feature, available in features:
-        status = "✅ Available" if available else "❌ Limited"
+        status = "[OK] Available" if available else "[FAIL] Limited"
         print(f"  {feature}: {status}")
 
 if __name__ == "__main__":

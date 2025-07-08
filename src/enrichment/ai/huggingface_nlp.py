@@ -147,7 +147,7 @@ class HuggingFaceNLPEngine:
                 model=model_name,
                 tokenizer=model_name,
                 device=0 if self.device == 'cuda' and torch.cuda.is_available() else -1,
-                cache_dir=self.cache_dir
+                # cache_dir=self.cache_dir
             )
             
             self.logger.info("Sentiment analysis model loaded")
@@ -166,7 +166,7 @@ class HuggingFaceNLPEngine:
                 model=model_name,
                 tokenizer=model_name,
                 device=0 if self.device == 'cuda' and torch.cuda.is_available() else -1,
-                cache_dir=self.cache_dir
+                # cache_dir=self.cache_dir
             )
             
             self.logger.info("Emotion detection model loaded")
@@ -185,7 +185,7 @@ class HuggingFaceNLPEngine:
                 model=model_name,
                 tokenizer=model_name,
                 device=0 if self.device == 'cuda' and torch.cuda.is_available() else -1,
-                cache_dir=self.cache_dir,
+                # cache_dir=self.cache_dir,
                 aggregation_strategy="simple"
             )
             
@@ -224,7 +224,7 @@ class HuggingFaceNLPEngine:
                 "zero-shot-classification",
                 model=model_name,
                 device=0 if self.device == 'cuda' and torch.cuda.is_available() else -1,
-                cache_dir=self.cache_dir
+                # cache_dir=self.cache_dir
             )
             
             self.logger.info("Zero-shot classification model loaded")

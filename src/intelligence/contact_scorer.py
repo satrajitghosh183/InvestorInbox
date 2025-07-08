@@ -12,7 +12,7 @@ import logging
 import math
 import re
 from typing import Dict, Any, List, Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta,timezone
 from dataclasses import dataclass
 from collections import defaultdict
 
@@ -116,11 +116,11 @@ class EnhancedContactScoringEngine:
         self.industry_importance = self._load_industry_mappings()
         
         self.logger.info(f"Enhanced Contact Scorer initialized with:")
-        self.logger.info(f"  - HuggingFace NLP: {'✅' if self.nlp_engine else '❌'}")
-        self.logger.info(f"  - OpenAI Analysis: {'✅' if self.openai_analyzer else '❌'}")
-        self.logger.info(f"  - Clearbit: {'✅' if self.clearbit_source else '❌'}")
-        self.logger.info(f"  - Hunter.io: {'✅' if self.hunter_source else '❌'}")
-        self.logger.info(f"  - People Data Labs: {'✅' if self.pdl_source else '❌'}")
+        self.logger.info(f"  - HuggingFace NLP: {'[OK]' if self.nlp_engine else '[FAIL]'}")
+        self.logger.info(f"  - OpenAI Analysis: {'[OK]' if self.openai_analyzer else '[FAIL]'}")
+        self.logger.info(f"  - Clearbit: {'[OK]' if self.clearbit_source else '[FAIL]'}")
+        self.logger.info(f"  - Hunter.io: {'[OK]' if self.hunter_source else '[FAIL]'}")
+        self.logger.info(f"  - People Data Labs: {'[OK]' if self.pdl_source else '[FAIL]'}")
         
         # Then in the __init__ method, add:
         if not TRANSFORMERS_AVAILABLE:
@@ -453,7 +453,7 @@ class EnhancedContactScoringEngine:
                 'content_engagement': content_engagement_score,
                 'meeting_engagement': meeting_score,
                 'total_interactions': contact.frequency,
-                'days_since_last_contact': (datetime.now() - contact.last_seen).days,
+                'days_since_last_contact': self._safe_datetime_diff(datetime.now(timezone.utc), contact.last_seen).days,
                 'has_meetings': contact.meeting_count > 0,
                 'bidirectional_communication': contact.sent_to > 0 and contact.received_from > 0,
                 'has_social_profiles': len(contact.social_profiles) > 0,
@@ -520,41 +520,160 @@ class EnhancedContactScoringEngine:
         total_score = response_rate + response_time_bonus + balance_bonus
         return min(total_score, 1.0)
     
+
     def _calculate_recency_score(self, contact: Contact) -> float:
         """Enhanced recency scoring with interaction pattern analysis"""
-        days_since_last = (datetime.now() - contact.last_seen).days
-        
-        # Base recency score
-        if days_since_last <= 1:
-            base_score = 1.0
-        elif days_since_last <= 7:
-            base_score = 0.9
-        elif days_since_last <= 30:
-            base_score = 0.7
-        elif days_since_last <= 90:
-            base_score = 0.5
-        elif days_since_last <= 180:
-            base_score = 0.3
-        else:
-            base_score = 0.1
-        
-        # Consistency bonus - regular communication pattern
-        consistency_bonus = 0.0
-        if hasattr(contact, 'interactions') and len(contact.interactions) >= 3:
-            # Calculate communication frequency consistency
-            time_gaps = []
-            sorted_interactions = sorted(contact.interactions, key=lambda x: x.timestamp)
-            for i in range(1, len(sorted_interactions)):
-                gap = (sorted_interactions[i].timestamp - sorted_interactions[i-1].timestamp).days
-                time_gaps.append(gap)
+        try:
+            # Handle timezone-aware datetime comparisons
+            now = datetime.now(timezone.utc)
             
-            if time_gaps:
-                # Lower variance in gaps = more consistent = bonus
-                avg_gap = sum(time_gaps) / len(time_gaps)
-                variance = sum((gap - avg_gap) ** 2 for gap in time_gaps) / len(time_gaps)
-                consistency_bonus = max(0, 0.1 - variance / 1000)  # Normalize variance
+            # Ensure contact.last_seen is timezone-aware
+            last_seen = contact.last_seen
+            if last_seen.tzinfo is None:
+                # Assume UTC if no timezone info
+                last_seen = last_seen.replace(tzinfo=timezone.utc)
+            elif last_seen.tzinfo != timezone.utc:
+                # Convert to UTC for comparison
+                last_seen = last_seen.astimezone(timezone.utc)
+            
+            days_since_last = (now - last_seen).days
+            
+            # Base recency score
+            if days_since_last <= 1:
+                base_score = 1.0
+            elif days_since_last <= 7:
+                base_score = 0.9
+            elif days_since_last <= 30:
+                base_score = 0.7
+            elif days_since_last <= 90:
+                base_score = 0.5
+            elif days_since_last <= 180:
+                base_score = 0.3
+            else:
+                base_score = 0.1
+            
+            # Consistency bonus - regular communication pattern
+            consistency_bonus = 0.0
+            if hasattr(contact, 'interactions') and len(contact.interactions) >= 3:
+                # Calculate communication frequency consistency
+                time_gaps = []
+                sorted_interactions = sorted(contact.interactions, key=lambda x: x.timestamp)
+                for i in range(1, len(sorted_interactions)):
+                    try:
+                        # Safe datetime difference calculation
+                        current_dt = sorted_interactions[i-1].timestamp
+                        next_dt = sorted_interactions[i].timestamp
+                        
+                        # Ensure both are timezone-aware
+                        if current_dt.tzinfo is None:
+                            current_dt = current_dt.replace(tzinfo=timezone.utc)
+                        if next_dt.tzinfo is None:
+                            next_dt = next_dt.replace(tzinfo=timezone.utc)
+                        
+                        gap = (next_dt - current_dt).days
+                        time_gaps.append(gap)
+                    except Exception as e:
+                        self.logger.debug(f"Error calculating time gap: {e}")
+                        continue
+                
+                if time_gaps:
+                    # Lower variance in gaps = more consistent = bonus
+                    avg_gap = sum(time_gaps) / len(time_gaps)
+                    variance = sum((gap - avg_gap) ** 2 for gap in time_gaps) / len(time_gaps)
+                    consistency_bonus = max(0, 0.1 - variance / 1000)  # Normalize variance
+            
+            return min(base_score + consistency_bonus, 1.0)
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating recency score: {e}")
+            return 0.5  # Safe fallback
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating recency score: {e}")
+            return 0.5  # Safe fallback
         
-        return min(base_score + consistency_bonus, 1.0)
+    def _ensure_timezone_aware(self, dt: datetime) -> datetime:
+        """Ensure datetime is timezone-aware (UTC)"""
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
+    def _safe_datetime_diff(self, dt1: datetime, dt2: datetime) -> timedelta:
+        """Safely calculate datetime difference handling timezone issues"""
+        try:
+            dt1_aware = self._ensure_timezone_aware(dt1)
+            dt2_aware = self._ensure_timezone_aware(dt2)
+            return dt1_aware - dt2_aware
+        except Exception as e:
+            self.logger.debug(f"Datetime difference calculation failed: {e}")
+            return timedelta(days=0)
+        
+    # def _calculate_recency_score(self, contact: Contact) -> float:
+        """Enhanced recency scoring with interaction pattern analysis"""
+        try:
+            # Handle timezone-aware datetime comparisons
+            now = datetime.now(timezone.utc)
+            
+            # Ensure contact.last_seen is timezone-aware
+            last_seen = contact.last_seen
+            if last_seen.tzinfo is None:
+                # Assume UTC if no timezone info
+                last_seen = last_seen.replace(tzinfo=timezone.utc)
+            elif last_seen.tzinfo != timezone.utc:
+                # Convert to UTC for comparison
+                last_seen = last_seen.astimezone(timezone.utc)
+            
+            days_since_last = (now - last_seen).days
+            
+            # Base recency score
+            if days_since_last <= 1:
+                base_score = 1.0
+            elif days_since_last <= 7:
+                base_score = 0.9
+            elif days_since_last <= 30:
+                base_score = 0.7
+            elif days_since_last <= 90:
+                base_score = 0.5
+            elif days_since_last <= 180:
+                base_score = 0.3
+            else:
+                base_score = 0.1
+            
+            # Consistency bonus - regular communication pattern
+            consistency_bonus = 0.0
+            if hasattr(contact, 'interactions') and len(contact.interactions) >= 3:
+                # Calculate communication frequency consistency
+                time_gaps = []
+                sorted_interactions = sorted(contact.interactions, key=lambda x: x.timestamp)
+                for i in range(1, len(sorted_interactions)):
+                    try:
+                        # Safe datetime difference calculation
+                        current_dt = sorted_interactions[i-1].timestamp
+                        next_dt = sorted_interactions[i].timestamp
+                        
+                        # Ensure both are timezone-aware
+                        if current_dt.tzinfo is None:
+                            current_dt = current_dt.replace(tzinfo=timezone.utc)
+                        if next_dt.tzinfo is None:
+                            next_dt = next_dt.replace(tzinfo=timezone.utc)
+                        
+                        gap = (next_dt - current_dt).days
+                        time_gaps.append(gap)
+                    except Exception as e:
+                        self.logger.debug(f"Error calculating time gap: {e}")
+                        continue
+                
+                if time_gaps:
+                    # Lower variance in gaps = more consistent = bonus
+                    avg_gap = sum(time_gaps) / len(time_gaps)
+                    variance = sum((gap - avg_gap) ** 2 for gap in time_gaps) / len(time_gaps)
+                    consistency_bonus = max(0, 0.1 - variance / 1000)  # Normalize variance
+            
+            return min(base_score + consistency_bonus, 1.0)
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating recency score: {e}")
+            return 0.5  # Safe fallback
     
     async def _calculate_enhanced_company_score(self, contact: Contact) -> float:
         """Enhanced company scoring with API enrichment and industry factors"""
@@ -1264,10 +1383,8 @@ class EnhancedContactScoringEngine:
             patterns['preferred_communication'] = 'email'
         
         return patterns
-    
-    # Utility methods for detailed analysis
     def _calculate_average_response_time(self, interactions: List[Interaction]) -> Optional[float]:
-        """Calculate average response time in hours"""
+        """Calculate average response time in hours with timezone safety"""
         response_times = []
         sorted_interactions = sorted(interactions, key=lambda x: x.timestamp)
         
@@ -1279,10 +1396,35 @@ class EnhancedContactScoringEngine:
                 next_interaction.direction == "inbound" and
                 next_interaction.timestamp > current.timestamp):
                 
-                response_time = (next_interaction.timestamp - current.timestamp).total_seconds() / 3600
-                response_times.append(response_time)
+                try:
+                    # Use safe datetime difference calculation
+                    time_diff = self._safe_datetime_diff(next_interaction.timestamp, current.timestamp)
+                    response_time = time_diff.total_seconds() / 3600
+                    if response_time > 0:  # Only add positive response times
+                        response_times.append(response_time)
+                except Exception as e:
+                    self.logger.debug(f"Response time calculation failed for interaction: {e}")
+                    continue
         
         return sum(response_times) / len(response_times) if response_times else None
+    # Utility methods for detailed analysis
+    # def _calculate_average_response_time(self, interactions: List[Interaction]) -> Optional[float]:
+    #     """Calculate average response time in hours"""
+    #     response_times = []
+    #     sorted_interactions = sorted(interactions, key=lambda x: x.timestamp)
+        
+    #     for i in range(len(sorted_interactions) - 1):
+    #         current = sorted_interactions[i]
+    #         next_interaction = sorted_interactions[i + 1]
+            
+    #         if (current.direction == "outbound" and 
+    #             next_interaction.direction == "inbound" and
+    #             next_interaction.timestamp > current.timestamp):
+                
+    #             response_time = (next_interaction.timestamp - current.timestamp).total_seconds() / 3600
+    #             response_times.append(response_time)
+        
+    #     return sum(response_times) / len(response_times) if response_times else None
     
     def _get_dominant_emotion(self, contact: Contact) -> EmotionType:
         """Get dominant emotion from AI analysis"""
@@ -1547,7 +1689,7 @@ class EnhancedContactScoringEngine:
         
         # Recent engagement matters
         recency_bonus = 0.0
-        days_since_last = (datetime.now() - contact.last_seen).days
+        days_since_last = self._safe_datetime_diff(datetime.now(timezone.utc), contact.last_seen).days
         if days_since_last <= 7:
             recency_bonus = 0.2
         elif days_since_last <= 30:
@@ -1887,7 +2029,7 @@ class EnhancedContactScoringEngine:
             },
             'key_insights': [
                 f"Total interactions: {contact.frequency}",
-                f"Last contact: {(datetime.now() - contact.last_seen).days} days ago",
+                f"Last contact: {self._safe_datetime_diff(datetime.now(timezone.utc), contact.last_seen).days} days ago",
                 f"Response rate: {score.response_rate:.1%}",
                 f"Company: {contact.company or 'Unknown'}",
                 f"Job title: {contact.job_title or 'Unknown'}",

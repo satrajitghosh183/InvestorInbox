@@ -276,41 +276,41 @@ class EnhancedExcelExporter:
                 'Job_Title': self._get_best_value(self._safe_getattr(contact, 'job_title'), enrichment_data.get('job_title')),
                 'Company': self._get_best_value(self._safe_getattr(contact, 'company'), enrichment_data.get('company')),
                 'Industry': self._get_best_value(self._safe_getattr(contact, 'industry'), enrichment_data.get('industry')),
-                'Seniority_Level': self._get_best_value(self._safe_getattr(contact, 'seniority_level'), enrichment_data.get('seniority_level')),
+                # 'Seniority_Level': self._get_best_value(self._safe_getattr(contact, 'seniority_level'), enrichment_data.get('seniority_level')),
                 
                 # Social profiles (check both contact attributes and enrichment data)
-                'LinkedIn_URL': self._get_best_value(self._safe_getattr(contact, 'linkedin_url'), enrichment_data.get('linkedin_url')),
-                'Twitter_Handle': self._get_best_value(self._safe_getattr(contact, 'twitter_handle'), enrichment_data.get('twitter')),
-                'GitHub_Username': self._get_best_value(self._safe_getattr(contact, 'github_username'), enrichment_data.get('github')),
-                'Facebook_URL': enrichment_data.get('facebook_url', ''),
-                'Instagram_Handle': enrichment_data.get('instagram', ''),
+                # 'LinkedIn_URL': self._get_best_value(self._safe_getattr(contact, 'linkedin_url'), enrichment_data.get('linkedin_url')),
+                # 'Twitter_Handle': self._get_best_value(self._safe_getattr(contact, 'twitter_handle'), enrichment_data.get('twitter')),
+                # 'GitHub_Username': self._get_best_value(self._safe_getattr(contact, 'github_username'), enrichment_data.get('github')),
+                # 'Facebook_URL': enrichment_data.get('facebook_url', ''),
+                # 'Instagram_Handle': enrichment_data.get('instagram', ''),
                 
                 # Additional enriched fields
                 'Phone_Number': enrichment_data.get('phone', ''),
-                'Bio': enrichment_data.get('bio', ''),
+                # 'Bio': enrichment_data.get('bio', ''),
                 'Website': enrichment_data.get('website', ''),
-                'Skills': ', '.join(enrichment_data.get('skills', [])) if isinstance(enrichment_data.get('skills'), list) else enrichment_data.get('skills', ''),
-                'Education': enrichment_data.get('education', ''),
-                'Experience_Years': enrichment_data.get('experience_years', ''),
+                # 'Skills': ', '.join(enrichment_data.get('skills', [])) if isinstance(enrichment_data.get('skills'), list) else enrichment_data.get('skills', ''),
+                # 'Education': enrichment_data.get('education', ''),
+                # 'Experience_Years': enrichment_data.get('experience_years', ''),
                 'Department': enrichment_data.get('department', ''),
                 'Employee_Count': enrichment_data.get('employee_count', ''),
                 'Company_Revenue': enrichment_data.get('company_revenue', ''),
-                'Technologies': ', '.join(enrichment_data.get('technologies', [])) if isinstance(enrichment_data.get('technologies'), list) else enrichment_data.get('technologies', ''),
+                # 'Technologies': ', '.join(enrichment_data.get('technologies', [])) if isinstance(enrichment_data.get('technologies'), list) else enrichment_data.get('technologies', ''),
                 
                 # Source and quality metadata
-                'Data_Source': self._safe_getattr(contact, 'data_source', 'None'),
-                'Confidence_Score': self._safe_getattr(contact, 'confidence', 0.0),
-                'Source_Accounts': ', '.join(self._safe_getattr(contact, 'source_accounts', [])),
+                # 'Data_Source': self._safe_getattr(contact, 'data_source', 'None'),
+                # 'Confidence_Score': self._safe_getattr(contact, 'confidence', 0.0),
+                # 'Source_Accounts': ', '.join(self._safe_getattr(contact, 'source_accounts', [])),
                 
                 # Timing data
                 'First_Seen': contact.first_seen.strftime('%Y-%m-%d %H:%M') if contact.first_seen else '',
                 'Last_Seen': contact.last_seen.strftime('%Y-%m-%d %H:%M') if contact.last_seen else '',
                 'Days_Since_Last_Contact': days_since_last,
                 
-                # Additional metadata
-                'Is_Verified': 'Yes' if self._safe_getattr(contact, 'is_verified', False) else 'No',
-                'Tags': ', '.join(self._safe_getattr(contact, 'tags', [])),
-                'Notes': self._safe_getattr(contact, 'notes', '')
+                # # Additional metadata
+                # 'Is_Verified': 'Yes' if self._safe_getattr(contact, 'is_verified', False) else 'No',
+                # 'Tags': ', '.join(self._safe_getattr(contact, 'tags', [])),
+                # 'Notes': self._safe_getattr(contact, 'notes', '')
             }
 
             # Add any remaining enrichment fields that weren't covered above
